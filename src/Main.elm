@@ -1,9 +1,12 @@
 port module Main exposing (Model, Msg(..), init, main, update, view)
 
 import Browser
-import Html exposing (Html, button, div, h1, h2, h3, img, input, p, text)
-import Html.Attributes exposing (placeholder, src, value)
-import Html.Events exposing (onClick, onInput)
+import Css exposing (auto, px, rem, zero)
+import Css.Global as Global
+import Html as PlainHtml
+import Html.Styled as Html exposing (Html, button, div, form, h1, h2, input, label, p, text)
+import Html.Styled.Attributes exposing (css, placeholder, src, type_, value)
+import Html.Styled.Events exposing (onInput, onSubmit)
 import Json.Decode
 import Json.Decode.Pipeline
 import Json.Encode
@@ -12,7 +15,7 @@ import Json.Encode
 main : Program () Model Msg
 main =
     Browser.element
-        { view = view
+        { view = view >> Html.toUnstyled
         , init = \_ -> init
         , update = update
         , subscriptions = subscriptions
@@ -23,17 +26,17 @@ subscriptions : Model -> Sub Msg
 subscriptions model =
     Sub.batch
         [ errorReceived (Json.Decode.decodeValue errorDecoder >> ErrorReceived)
-        , receiveMessages (Json.Decode.decodeValue messageListDecoder >> MessagesReceived)
+        , receiveQuestions (Json.Decode.decodeValue questionsDecoder >> QuestionsReceived)
         ]
 
 
 port errorReceived : (Json.Encode.Value -> msg) -> Sub msg
 
 
-port saveMessage : Json.Encode.Value -> Cmd msg
+port submitQuestion : Json.Encode.Value -> Cmd msg
 
 
-port receiveMessages : (Json.Encode.Value -> msg) -> Sub msg
+port receiveQuestions : (Json.Encode.Value -> msg) -> Sub msg
 
 
 
@@ -41,29 +44,27 @@ port receiveMessages : (Json.Encode.Value -> msg) -> Sub msg
 
 
 type alias Model =
-    { error : ErrorData
-    , inputContent : String
-    , messages : List String
+    { questions : List Question
+    , newQuestionInput : String
+    , error : Maybe Error
     }
 
 
-type alias MessageContent =
-    { uid : String, content : String }
+type alias Question =
+    { question : String
+    }
 
 
-type alias ErrorData =
-    { code : Maybe String, message : Maybe String, credential : Maybe String }
-
-
-type alias UserData =
-    { token : String, email : String, uid : String }
+type Error
+    = FirestoreError { code : String, errorMessage : String }
+    | ParsingError String
 
 
 init : ( Model, Cmd Msg )
 init =
-    ( { error = emptyError
-      , inputContent = ""
-      , messages = []
+    ( { questions = []
+      , newQuestionInput = ""
+      , error = Nothing
       }
     , Cmd.none
     )
@@ -74,15 +75,10 @@ init =
 
 
 type Msg
-    = ErrorReceived (Result Json.Decode.Error ErrorData)
+    = ErrorReceived (Result Json.Decode.Error Error)
     | SaveMessage
-    | InputChanged String
-    | MessagesReceived (Result Json.Decode.Error (List String))
-
-
-emptyError : ErrorData
-emptyError =
-    { code = Maybe.Nothing, credential = Maybe.Nothing, message = Maybe.Nothing }
+    | NewQuestionInputChanged String
+    | QuestionsReceived (Result Json.Decode.Error (List Question))
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -91,59 +87,53 @@ update msg model =
         ErrorReceived result ->
             case result of
                 Ok value ->
-                    ( { model | error = value }, Cmd.none )
+                    ( { model | error = Just value }, Cmd.none )
 
                 Err error ->
-                    ( { model | error = messageToError <| Json.Decode.errorToString error }, Cmd.none )
+                    ( { model | error = Just (ParsingError (Json.Decode.errorToString error)) }, Cmd.none )
 
         SaveMessage ->
-            ( model, saveMessage <| messageEncoder model )
+            ( { model | newQuestionInput = "" }, submitQuestion <| questionEncoder model )
 
-        InputChanged value ->
-            ( { model | inputContent = value }, Cmd.none )
+        NewQuestionInputChanged value ->
+            ( { model | newQuestionInput = value }, Cmd.none )
 
-        MessagesReceived result ->
+        QuestionsReceived result ->
             case result of
-                Ok value ->
-                    ( { model | messages = value }, Cmd.none )
+                Ok questions ->
+                    ( { model | questions = questions }, Cmd.none )
 
                 Err error ->
-                    ( { model | error = messageToError <| Json.Decode.errorToString error }, Cmd.none )
+                    ( { model | error = Just (ParsingError (Json.Decode.errorToString error)) }, Cmd.none )
 
 
-messageEncoder : Model -> Json.Encode.Value
-messageEncoder model =
+questionEncoder : Model -> Json.Encode.Value
+questionEncoder model =
     Json.Encode.object
-        [ ( "content", Json.Encode.string model.inputContent )
+        [ ( "question", Json.Encode.string model.newQuestionInput )
         ]
 
 
-messageToError : String -> ErrorData
-messageToError message =
-    { code = Maybe.Nothing, credential = Maybe.Nothing, message = Just message }
-
-
-errorPrinter : ErrorData -> String
-errorPrinter errorData =
-    Maybe.withDefault "" errorData.code ++ " " ++ Maybe.withDefault "" errorData.credential ++ " " ++ Maybe.withDefault "" errorData.message
-
-
-errorDecoder : Json.Decode.Decoder ErrorData
+errorDecoder : Json.Decode.Decoder Error
 errorDecoder =
-    Json.Decode.succeed ErrorData
-        |> Json.Decode.Pipeline.required "code" (Json.Decode.nullable Json.Decode.string)
-        |> Json.Decode.Pipeline.required "message" (Json.Decode.nullable Json.Decode.string)
-        |> Json.Decode.Pipeline.required "credential" (Json.Decode.nullable Json.Decode.string)
+    Json.Decode.map2
+        (\code errorMessage ->
+            FirestoreError { code = code, errorMessage = errorMessage }
+        )
+        (Json.Decode.field "code" Json.Decode.string)
+        (Json.Decode.field "message" Json.Decode.string)
 
 
-messagesDecoder =
-    Json.Decode.decodeString (Json.Decode.list Json.Decode.string)
-
-
-messageListDecoder : Json.Decode.Decoder (List String)
-messageListDecoder =
-    Json.Decode.succeed identity
-        |> Json.Decode.Pipeline.required "messages" (Json.Decode.list Json.Decode.string)
+questionsDecoder : Json.Decode.Decoder (List Question)
+questionsDecoder =
+    Json.Decode.list
+        (Json.Decode.map
+            (\question ->
+                { question = question
+                }
+            )
+            (Json.Decode.field "question" Json.Decode.string)
+        )
 
 
 
@@ -152,17 +142,92 @@ messageListDecoder =
 
 view : Model -> Html Msg
 view model =
-    div []
-        [ h1 [] [ text "UXAC Lean Coffee" ]
-        , div []
-            [ input [ placeholder "Message to save", value model.inputContent, onInput InputChanged ] []
-            , button [ onClick SaveMessage ] [ text "Save new message" ]
+    div
+        [ css
+            [ bodyFont
+            , Css.maxWidth (rem 32)
+            , Css.margin2 zero auto
             ]
-        , div []
-            [ div [] <|
-                List.map
-                    (\m -> p [] [ text m ])
-                    model.messages
-            ]
-        , h2 [] [ text <| errorPrinter model.error ]
         ]
+        ([ h1 [] [ text "UXAC Lean Coffee" ] ]
+            ++ (case model.error of
+                    Just error ->
+                        [ div
+                            [ css
+                                [ Css.border3 (px 1) Css.solid (Css.hsl 0 0.8 0.75)
+                                , Css.padding (rem 1)
+                                ]
+                            ]
+                            [ text <| stringFromError error ]
+                        ]
+
+                    Nothing ->
+                        []
+               )
+            ++ [ let
+                    verticalMargin =
+                        1
+                 in
+                 div
+                    [ css
+                        [ Css.displayFlex
+                        , Css.flexDirection Css.column
+                        , Css.backgroundColor (Css.hsl 49.1 0.2 0.95)
+                        , Css.padding2 (rem <| 1 - (verticalMargin / 2)) (rem 1)
+                        , Css.borderRadius (rem 0.5)
+                        , Global.children
+                            [ Global.everything [ Css.margin2 (rem <| verticalMargin / 2) zero ]
+                            ]
+                        ]
+                    ]
+                    (List.map questionCard model.questions)
+               , div [ css [ Css.marginTop (rem 1) ] ] [ newQuestion model.newQuestionInput ]
+               ]
+        )
+
+
+bodyFont : Css.Style
+bodyFont =
+    Css.fontFamilies [ "Verdana", .value Css.sansSerif ]
+
+
+stringFromError : Error -> String
+stringFromError error =
+    case error of
+        FirestoreError { code, errorMessage } ->
+            "There was an error with the database: " ++ errorMessage ++ " (code " ++ code ++ ")"
+
+        ParsingError errorMessage ->
+            "There was an error with how the data looks like: " ++ errorMessage
+
+
+questionCard : Question -> Html Msg
+questionCard question =
+    card [ text question.question ]
+
+
+newQuestion : String -> Html Msg
+newQuestion currentInput =
+    form
+        [ css [ Css.displayFlex, Css.flexDirection Css.column, Css.alignItems Css.flexStart ]
+        , onSubmit SaveMessage
+        ]
+        [ label [ css [ Css.displayFlex, Css.flexDirection Css.column ] ]
+            [ text "Your question"
+            , input [ value currentInput, onInput NewQuestionInputChanged ] []
+            , input [ type_ "submit", value "Submit" ] []
+            ]
+        ]
+
+
+card : List (Html Msg) -> Html Msg
+card content =
+    div
+        [ css
+            [ Css.padding (rem 1)
+            , Css.borderRadius (rem 0.5)
+            , Css.boxShadow4 zero (rem 0.1) (rem 0.3) (Css.hsla 0 0 0 0.25)
+            , Css.backgroundColor (Css.hsl 0 0 1)
+            ]
+        ]
+        content

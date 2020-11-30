@@ -1,4 +1,3 @@
-import "./main.css";
 import * as firebase from "firebase/app";
 import "firebase/firebase-firestore";
 
@@ -28,27 +27,21 @@ const app = Elm.Main.init({
 
 // Set up listened on new messages
 db.collection(`test`).onSnapshot(docs => {
-  console.log("Received new snapshot: ", docs);
   const messages = [];
 
   docs.forEach(doc => {
-    if (doc.data().content) {
-      messages.push(doc.data().content);
-    }
+    messages.push(doc.data());
   });
 
-  app.ports.receiveMessages.send({
-    messages: messages
-  });
+  console.log("Received new messages: ", messages);
+  app.ports.receiveQuestions.send(messages);
 });
 
-app.ports.saveMessage.subscribe(data => {
-  console.log("Saving message to database: ",  data.content);
+app.ports.submitQuestion.subscribe(data => {
+  console.log("Submitting question to database: ",  data);
 
   db.collection(`test`)
-    .add({
-      content: data.content
-    })
+    .add(data)
     .catch(error => {
       app.ports.error.send({
         code: error.code,
