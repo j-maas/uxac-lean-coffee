@@ -1,7 +1,6 @@
-# UXAC
+# UXAC Lean Coffee
 
-## Gettings started
-
+## Getting started
 1. `$ npm install`
 2. Create an `.env` next to this file that uses the information your Firebase SDK [config object](https://firebase.google.com/docs/web/setup#config-object) like so:
     ```
