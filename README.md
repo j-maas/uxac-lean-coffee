@@ -13,7 +13,7 @@
     ELM_APP_APP_ID="1:916631954567:web:2a755b103fe23041"
     ```
 
-    _Note : All the informationm in the .env file is not secret, and can be shared. In fact, it will be accessible to anyone using your app via the console. [This is not a problem](https://stackoverflow.com/questions/37482366/is-it-safe-to-expose-firebase-apikey-to-the-public)!_
+    _Note : All the information in the .env file is not secret, and can be shared. In fact, it will be accessible to anyone using your app via the console. [This is not a problem](https://stackoverflow.com/questions/37482366/is-it-safe-to-expose-firebase-apikey-to-the-public)!_
 3. `$ npm start`
 
 ## History
