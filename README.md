@@ -12,11 +12,11 @@
     ELM_APP_MESSAGING_SENDER_ID="916631954567"
     ELM_APP_APP_ID="1:916631954567:web:2a755b103fe23041"
     # Set the following, if you deploy the app to a subpath.
-    # Otherwise links will be relative to the root and this will prevent the app from loading.
+    # Otherwise links will be relative to the root and the app will not load, because its file can't be found.
     # PUBLIC_URL="localhost:3000"
     ```
 
-    _Note : All the information in the .env file is not secret, and can be shared. In fact, it will be accessible to anyone using your app via the console. [This is not a problem](https://stackoverflow.com/questions/37482366/is-it-safe-to-expose-firebase-apikey-to-the-public)!_
+    _Note: All the information in the .env file is not secret, and can be shared. In fact, it will be accessible to anyone using your app via the console. [This is not a problem](https://stackoverflow.com/questions/37482366/is-it-safe-to-expose-firebase-apikey-to-the-public)!_
 3. `$ npm start`
 
 ## History
