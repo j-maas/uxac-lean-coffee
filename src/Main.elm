@@ -29,6 +29,7 @@ main =
 type alias Model =
     { questions : Fetched (List Question)
     , newQuestionInput : String
+    , user : Fetched User
     , error : Maybe Error
     }
 
@@ -43,6 +44,11 @@ type alias Question =
     }
 
 
+type alias User =
+    { uid : String
+    }
+
+
 type Error
     = FirestoreError { code : String, errorMessage : String }
     | ParsingError String
@@ -50,8 +56,9 @@ type Error
 
 init : ( Model, Cmd Msg )
 init =
-    ( { questions = []
+    ( { questions = Loading
       , newQuestionInput = ""
+      , user = Loading
       , error = Nothing
       }
     , Cmd.none
@@ -63,8 +70,9 @@ init =
 
 
 type Msg
+    = UserReceived (Result Json.Decode.Error User)
     | QuestionsReceived (Result Json.Decode.Error (List Question))
-    | SaveMessage
+    | SaveQuestion User
     | ErrorReceived (Result Json.Decode.Error Error)
     | NewQuestionInputChanged String
 
@@ -72,10 +80,10 @@ type Msg
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
-        ErrorReceived result ->
+        UserReceived result ->
             case result of
-                Ok value ->
-                    ( { model | error = Just value }, Cmd.none )
+                Ok user ->
+                    ( { model | user = Received user }, Cmd.none )
 
                 Err error ->
                     ( { model | error = Just (ParsingError (Json.Decode.errorToString error)) }, Cmd.none )
@@ -96,8 +104,12 @@ update msg model =
                 Err error ->
                     ( { model | error = Just (ParsingError (Json.Decode.errorToString error)) }, Cmd.none )
 
-        SaveMessage ->
-            ( { model | newQuestionInput = "" }, submitQuestion <| questionEncoder model )
+        SaveQuestion user ->
+            let
+                submitCmd =
+                    submitQuestionCmd { question = model.newQuestionInput, userUid = user.uid }
+            in
+            ( { model | newQuestionInput = "" }, submitCmd )
 
         NewQuestionInputChanged value ->
             ( { model | newQuestionInput = value }, Cmd.none )
@@ -132,7 +144,7 @@ view model =
                         []
                )
             ++ [ questionList model.questions
-               , div [ css [ Css.marginTop (rem 1) ] ] [ newQuestion model.newQuestionInput ]
+               , submitForm model.user model.newQuestionInput
                ]
         )
 
@@ -186,11 +198,23 @@ questionCard question =
     card [ text question.question ]
 
 
-newQuestion : String -> Html Msg
-newQuestion currentInput =
+submitForm : Fetched User -> String -> Html Msg
+submitForm fetchedUser currentInput =
+    div [ css [ Css.marginTop (rem 1) ] ]
+        [ case fetchedUser of
+            Loading ->
+                text "Connecting to database…"
+
+            Received user ->
+                newQuestion user currentInput
+        ]
+
+
+newQuestion : User -> String -> Html Msg
+newQuestion user currentInput =
     form
         [ css [ Css.displayFlex, Css.flexDirection Css.column, Css.alignItems Css.flexStart ]
-        , onSubmit SaveMessage
+        , onSubmit (SaveQuestion user)
         ]
         [ label [ css [ Css.displayFlex, Css.flexDirection Css.column ] ]
             [ text "Your question"
@@ -226,6 +250,19 @@ subscriptions model =
         ]
 
 
+type alias QuestionSubmission =
+    { question : String, userUid : String }
+
+
+submitQuestionCmd : QuestionSubmission -> Cmd msg
+submitQuestionCmd submission =
+    questionEncoder submission
+        |> submitQuestion
+
+
+port receiveUser : (Json.Encode.Value -> msg) -> Sub msg
+
+
 port receiveQuestions : (Json.Encode.Value -> msg) -> Sub msg
 
 
@@ -233,6 +270,12 @@ port errorReceived : (Json.Encode.Value -> msg) -> Sub msg
 
 
 port submitQuestion : Json.Encode.Value -> Cmd msg
+
+
+userDecoder : Json.Decode.Decoder User
+userDecoder =
+    Json.Decode.field "uid" Json.Decode.string
+        |> Json.Decode.map (\uid -> { uid = uid })
 
 
 questionsDecoder : Json.Decode.Decoder (List Question)
@@ -257,8 +300,9 @@ errorDecoder =
         (Json.Decode.field "message" Json.Decode.string)
 
 
-questionEncoder : Model -> Json.Encode.Value
-questionEncoder model =
+questionEncoder : QuestionSubmission -> Json.Encode.Value
+questionEncoder { question, userUid } =
     Json.Encode.object
-        [ ( "question", Json.Encode.string model.newQuestionInput )
+        [ ( "question", Json.Encode.string question )
+        , ( "userUid", Json.Encode.string userUid )
         ]

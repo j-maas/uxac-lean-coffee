@@ -1,5 +1,6 @@
 import * as firebase from "firebase/app";
 import "firebase/firebase-firestore";
+import "firebase/firebase-auth";
 
 import { Elm } from "./Main.elm";
 import registerServiceWorker from "./registerServiceWorker";
@@ -27,7 +28,14 @@ const app = Elm.Main.init({
 
 const question_collection_path = "test"
 
-// Set up listened on new messages
+firebase.auth().signInAnonymously()
+  .then(user => {
+    console.log("User is logged in.")
+    const uid = user.user.uid
+
+    app.ports.receiveUser.send({ uid: uid })
+  })
+
 db.collection(question_collection_path).onSnapshot(docs => {
   const questions = [];
 
