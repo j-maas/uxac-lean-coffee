@@ -26,7 +26,8 @@ const app = Elm.Main.init({
   node: document.getElementById("root")
 });
 
-const question_collection_path = "test"
+const question_collection_path = "test_questions"
+const votes_collection_path = "test_votes"
 
 firebase.auth().signInAnonymously()
   .then(user => {
@@ -47,6 +48,18 @@ db.collection(question_collection_path).onSnapshot(docs => {
 
   console.log("Received new questions: ", questions);
   app.ports.receiveQuestions.send(questions);
+});
+
+db.collection(votes_collection_path).onSnapshot(docs => {
+  const votes = [];
+
+  docs.forEach(doc => {
+    const vote = doc.data();
+    votes.push(vote);
+  });
+
+  console.log("Received new votes: ", votes);
+  app.ports.receiveVotes.send(votes);
 });
 
 app.ports.submitQuestion.subscribe(data => {
@@ -74,5 +87,33 @@ app.ports.deleteQuestion.subscribe(id => {
       });
     });
 });
+
+app.ports.submitVote.subscribe(data => {
+  db.collection(votes_collection_path)
+    .doc(getVoteId(data))
+    .set(data)
+    .catch(error => {
+      app.ports.error.send({
+        code: error.code,
+        message: error.message
+      });
+    });
+});
+
+app.ports.retractVote.subscribe(data => {
+  db.collection(votes_collection_path)
+    .doc(getVoteId(data))
+    .delete()
+    .catch(error => {
+      app.ports.error.send({
+        code: error.code,
+        message: error.message
+      });
+    });
+});
+
+function getVoteId(data) {
+  return `${data.userId}:${data.questionId}`;
+}
 
 registerServiceWorker();

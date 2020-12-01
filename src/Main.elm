@@ -28,6 +28,7 @@ main =
 
 type alias Model =
     { questions : Fetched (List Question)
+    , votes : Fetched (List Vote)
     , newQuestionInput : String
     , user : Fetched User
     , error : Maybe Error
@@ -40,15 +41,29 @@ type Fetched a
 
 
 type alias Question =
-    { id : String
+    { id : QuestionId
     , question : String
     , userId : String
     }
 
 
-type alias User =
-    { id : String
+type alias QuestionId =
+    String
+
+
+type alias Vote =
+    { questionId : QuestionId
+    , userId : UserId
     }
+
+
+type alias User =
+    { id : UserId
+    }
+
+
+type alias UserId =
+    String
 
 
 type Error
@@ -59,6 +74,7 @@ type Error
 init : ( Model, Cmd Msg )
 init =
     ( { questions = Loading
+      , votes = Loading
       , newQuestionInput = ""
       , user = Loading
       , error = Nothing
@@ -74,8 +90,11 @@ init =
 type Msg
     = UserReceived (Result Json.Decode.Error User)
     | QuestionsReceived (Result Json.Decode.Error (List Question))
+    | VotesReceived (Result Json.Decode.Error (List Vote))
     | SaveQuestion User
-    | DeleteQuestion String
+    | DeleteQuestion QuestionId
+    | Upvote User Question
+    | RemoveUpvote User Question
     | ErrorReceived (Result Json.Decode.Error Error)
     | NewQuestionInputChanged String
 
@@ -99,6 +118,14 @@ update msg model =
                 Err error ->
                     ( { model | error = Just (ParsingError (Json.Decode.errorToString error)) }, Cmd.none )
 
+        VotesReceived result ->
+            case result of
+                Ok votes ->
+                    ( { model | votes = Received votes }, Cmd.none )
+
+                Err error ->
+                    ( { model | error = Just (ParsingError (Json.Decode.errorToString error)) }, Cmd.none )
+
         ErrorReceived result ->
             case result of
                 Ok value ->
@@ -114,6 +141,12 @@ update msg model =
 
         DeleteQuestion id ->
             ( model, deleteQuestionCmd id )
+
+        Upvote user question ->
+            ( model, submitVoteCmd user question )
+
+        RemoveUpvote user question ->
+            ( model, retractVoteCmd user question )
 
         NewQuestionInputChanged value ->
             ( { model | newQuestionInput = value }, Cmd.none )
@@ -147,7 +180,7 @@ view model =
                     Nothing ->
                         []
                )
-            ++ [ questionList model.questions model.user
+            ++ [ questionList model.questions model.user model.votes
                , submitForm model.user model.newQuestionInput
                ]
         )
@@ -168,8 +201,8 @@ stringFromError error =
             "There was an error with how the data looks like: " ++ errorMessage
 
 
-questionList : Fetched (List Question) -> Fetched User -> Html Msg
-questionList fetchedQuestions currentUser =
+questionList : Fetched (List Question) -> Fetched User -> Fetched (List Vote) -> Html Msg
+questionList fetchedQuestions currentUser votes =
     let
         verticalMargin =
             1
@@ -180,7 +213,7 @@ questionList fetchedQuestions currentUser =
                     [ text "Loading questions…" ]
 
                 Received questions ->
-                    List.map (questionCard currentUser) questions
+                    List.map (questionCard currentUser votes) questions
     in
     div
         [ css
@@ -197,9 +230,43 @@ questionList fetchedQuestions currentUser =
         contents
 
 
-questionCard : Fetched User -> Question -> Html Msg
-questionCard currentUser question =
+questionCard : Fetched User -> Fetched (List Vote) -> Question -> Html Msg
+questionCard currentUser fetchedVotes question =
     let
+        maybeVoteButton =
+            case ( currentUser, fetchedVotes ) of
+                ( Received user, Received votes ) ->
+                    let
+                        votesForThisQuestion =
+                            List.filter (\{ questionId } -> questionId == question.id) votes
+
+                        voteCount =
+                            votesForThisQuestion
+                                |> List.length
+
+                        userAlreadyVoted =
+                            List.any (\{ userId } -> userId == user.id) votesForThisQuestion
+
+                        ( action, description ) =
+                            if userAlreadyVoted then
+                                ( RemoveUpvote, "Remove upvote" )
+
+                            else
+                                ( Upvote, "Upvote" )
+                    in
+                    [ button [ onClick (action user question) ]
+                        [ text
+                            (description
+                                ++ " ("
+                                ++ String.fromInt voteCount
+                                ++ ")"
+                            )
+                        ]
+                    ]
+
+                _ ->
+                    []
+
         mayModifyQuestion =
             case currentUser of
                 Loading ->
@@ -218,6 +285,7 @@ questionCard currentUser question =
     card
         ([ text question.question
          ]
+            ++ maybeVoteButton
             ++ maybeDeleteButton
         )
 
@@ -270,6 +338,7 @@ subscriptions model =
     Sub.batch
         [ receiveUser (Json.Decode.decodeValue userDecoder >> UserReceived)
         , receiveQuestions (Json.Decode.decodeValue questionsDecoder >> QuestionsReceived)
+        , receiveVotes (Json.Decode.decodeValue votesDecoder >> VotesReceived)
         , errorReceived (Json.Decode.decodeValue errorDecoder >> ErrorReceived)
         ]
 
@@ -289,10 +358,25 @@ deleteQuestionCmd questionId =
     deleteQuestion questionId
 
 
+submitVoteCmd : User -> Question -> Cmd msg
+submitVoteCmd user question =
+    voteEncoder user question
+        |> submitVote
+
+
+retractVoteCmd : User -> Question -> Cmd msg
+retractVoteCmd user question =
+    voteEncoder user question
+        |> retractVote
+
+
 port receiveUser : (Json.Encode.Value -> msg) -> Sub msg
 
 
 port receiveQuestions : (Json.Encode.Value -> msg) -> Sub msg
+
+
+port receiveVotes : (Json.Encode.Value -> msg) -> Sub msg
 
 
 port errorReceived : (Json.Encode.Value -> msg) -> Sub msg
@@ -302,6 +386,12 @@ port submitQuestion : Json.Encode.Value -> Cmd msg
 
 
 port deleteQuestion : String -> Cmd msg
+
+
+port submitVote : Json.Encode.Value -> Cmd msg
+
+
+port retractVote : Json.Encode.Value -> Cmd msg
 
 
 userDecoder : Json.Decode.Decoder User
@@ -326,6 +416,20 @@ questionsDecoder =
         )
 
 
+votesDecoder : Json.Decode.Decoder (List Vote)
+votesDecoder =
+    Json.Decode.list
+        (Json.Decode.map2
+            (\questionId userId ->
+                { questionId = questionId
+                , userId = userId
+                }
+            )
+            (Json.Decode.field "questionId" Json.Decode.string)
+            (Json.Decode.field "userId" Json.Decode.string)
+        )
+
+
 errorDecoder : Json.Decode.Decoder Error
 errorDecoder =
     Json.Decode.map2
@@ -341,4 +445,12 @@ questionEncoder { question, userId } =
     Json.Encode.object
         [ ( "question", Json.Encode.string question )
         , ( "userId", Json.Encode.string userId )
+        ]
+
+
+voteEncoder : User -> Question -> Json.Encode.Value
+voteEncoder user question =
+    Json.Encode.object
+        [ ( "userId", Json.Encode.string user.id )
+        , ( "questionId", Json.Encode.string question.id )
         ]
