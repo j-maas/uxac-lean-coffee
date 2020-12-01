@@ -25,22 +25,24 @@ const app = Elm.Main.init({
   node: document.getElementById("root")
 });
 
+const question_collection_path = "test"
+
 // Set up listened on new messages
-db.collection(`test`).onSnapshot(docs => {
-  const messages = [];
+db.collection(question_collection_path).onSnapshot(docs => {
+  const questions = [];
 
   docs.forEach(doc => {
-    messages.push(doc.data());
+    questions.push(doc.data());
   });
 
-  console.log("Received new messages: ", messages);
-  app.ports.receiveQuestions.send(messages);
+  console.log("Received new messages: ", questions);
+  app.ports.receiveQuestions.send(questions);
 });
 
 app.ports.submitQuestion.subscribe(data => {
   console.log("Submitting question to database: ",  data);
 
-  db.collection(`test`)
+  db.collection(question_collection_path)
     .add(data)
     .catch(error => {
       app.ports.error.send({
