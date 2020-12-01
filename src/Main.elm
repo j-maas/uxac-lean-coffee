@@ -259,7 +259,7 @@ questionList fetchedQuestions currentUser votes =
         [ css
             [ Css.displayFlex
             , Css.flexDirection Css.column
-            , Css.backgroundColor (Css.hsl 49.1 0.2 0.95)
+            , Css.backgroundColor (Css.hsl primaryHue 0.2 0.95)
             , Css.padding2 zero (rem 1)
             , Css.borderRadius (rem 0.5)
             , Css.paddingTop (rem <| 1 - (verticalMargin / 2))
@@ -289,20 +289,34 @@ questionCard currentUser fetchedVotes question =
                         userAlreadyVoted =
                             List.any (\{ userId } -> userId == user.id) votesForThisQuestion
 
-                        ( action, description ) =
+                        state =
                             if userAlreadyVoted then
-                                ( RemoveUpvote, "Remove upvote" )
+                                { action = RemoveUpvote
+                                , saturation = 1
+                                , lightness = 0.6
+                                , border = Css.borderWidth (px 2)
+                                , margin = px 0
+                                }
 
                             else
-                                ( Upvote, "Upvote" )
+                                { action = Upvote
+                                , saturation = 0.4
+                                , lightness = 0.9
+                                , border = Css.batch []
+                                , margin = px 1
+                                }
                     in
-                    [ button [ onClick (action user question) ]
+                    [ button
+                        [ onClick (state.action user question)
+                        , css
+                            [ buttonStyle
+                            , Css.backgroundColor (Css.hsl primaryHue state.saturation state.lightness)
+                            , state.border
+                            , Css.margin state.margin
+                            ]
+                        ]
                         [ text
-                            (description
-                                ++ " ("
-                                ++ String.fromInt voteCount
-                                ++ ")"
-                            )
+                            ("👍 " ++ String.fromInt voteCount)
                         ]
                     ]
 
@@ -319,7 +333,12 @@ questionCard currentUser fetchedVotes question =
 
         maybeDeleteButton =
             if mayModifyQuestion then
-                [ button [ onClick (DeleteQuestion question.id) ] [ text "Delete" ] ]
+                [ button
+                    [ onClick (DeleteQuestion question.id)
+                    , css [ buttonStyle ]
+                    ]
+                    [ text "Delete" ]
+                ]
 
             else
                 []
@@ -328,7 +347,13 @@ questionCard currentUser fetchedVotes question =
         [ div [ css [ Css.displayFlex, Css.flexDirection Css.column ] ]
             [ text question.question
             , div
-                []
+                [ css
+                    [ Css.marginTop (rem 1)
+                    , Css.displayFlex
+                    , Css.flexDirection Css.row
+                    , Css.justifyContent Css.spaceBetween
+                    ]
+                ]
                 (maybeVoteButton
                     ++ maybeDeleteButton
                 )
@@ -357,7 +382,7 @@ newQuestion user currentInput =
         [ label [ css [ Css.displayFlex, Css.flexDirection Css.column ] ]
             [ text "Your question"
             , input [ value currentInput, onInput NewQuestionInputChanged ] []
-            , input [ type_ "submit", value "Submit" ] []
+            , input [ type_ "submit", value "Submit", css [ buttonStyle ] ] []
             ]
         ]
 
@@ -373,6 +398,24 @@ card content =
             ]
         ]
         content
+
+
+buttonStyle : Css.Style
+buttonStyle =
+    Css.batch
+        [ Css.padding2 (rem 0.3) (rem 0.5)
+        , Css.border3 (px 1) Css.solid (Css.hsl 0 0 0)
+        , Css.borderRadius (rem 0.3)
+        , Css.backgroundColor (Css.hsl 0 0 1)
+        , Css.hover
+            [ Css.property "filter" "brightness(90%)"
+            ]
+        ]
+
+
+primaryHue : Float
+primaryHue =
+    49.1
 
 
 
