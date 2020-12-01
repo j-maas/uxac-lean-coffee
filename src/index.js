@@ -35,7 +35,7 @@ db.collection(question_collection_path).onSnapshot(docs => {
     questions.push(doc.data());
   });
 
-  console.log("Received new messages: ", questions);
+  console.log("Received new questions: ", questions);
   app.ports.receiveQuestions.send(questions);
 });
 

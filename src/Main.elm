@@ -22,32 +22,20 @@ main =
         }
 
 
-subscriptions : Model -> Sub Msg
-subscriptions model =
-    Sub.batch
-        [ errorReceived (Json.Decode.decodeValue errorDecoder >> ErrorReceived)
-        , receiveQuestions (Json.Decode.decodeValue questionsDecoder >> QuestionsReceived)
-        ]
-
-
-port errorReceived : (Json.Encode.Value -> msg) -> Sub msg
-
-
-port submitQuestion : Json.Encode.Value -> Cmd msg
-
-
-port receiveQuestions : (Json.Encode.Value -> msg) -> Sub msg
-
-
 
 ---- MODEL ----
 
 
 type alias Model =
-    { questions : List Question
+    { questions : Fetched (List Question)
     , newQuestionInput : String
     , error : Maybe Error
     }
+
+
+type Fetched a
+    = Loading
+    | Received a
 
 
 type alias Question =
@@ -75,10 +63,10 @@ init =
 
 
 type Msg
-    = ErrorReceived (Result Json.Decode.Error Error)
-    | SaveMessage
-    | NewQuestionInputChanged String
     | QuestionsReceived (Result Json.Decode.Error (List Question))
+    | SaveMessage
+    | ErrorReceived (Result Json.Decode.Error Error)
+    | NewQuestionInputChanged String
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -92,48 +80,27 @@ update msg model =
                 Err error ->
                     ( { model | error = Just (ParsingError (Json.Decode.errorToString error)) }, Cmd.none )
 
+        QuestionsReceived result ->
+            case result of
+                Ok questions ->
+                    ( { model | questions = Received questions }, Cmd.none )
+
+                Err error ->
+                    ( { model | error = Just (ParsingError (Json.Decode.errorToString error)) }, Cmd.none )
+
+        ErrorReceived result ->
+            case result of
+                Ok value ->
+                    ( { model | error = Just value }, Cmd.none )
+
+                Err error ->
+                    ( { model | error = Just (ParsingError (Json.Decode.errorToString error)) }, Cmd.none )
+
         SaveMessage ->
             ( { model | newQuestionInput = "" }, submitQuestion <| questionEncoder model )
 
         NewQuestionInputChanged value ->
             ( { model | newQuestionInput = value }, Cmd.none )
-
-        QuestionsReceived result ->
-            case result of
-                Ok questions ->
-                    ( { model | questions = questions }, Cmd.none )
-
-                Err error ->
-                    ( { model | error = Just (ParsingError (Json.Decode.errorToString error)) }, Cmd.none )
-
-
-questionEncoder : Model -> Json.Encode.Value
-questionEncoder model =
-    Json.Encode.object
-        [ ( "question", Json.Encode.string model.newQuestionInput )
-        ]
-
-
-errorDecoder : Json.Decode.Decoder Error
-errorDecoder =
-    Json.Decode.map2
-        (\code errorMessage ->
-            FirestoreError { code = code, errorMessage = errorMessage }
-        )
-        (Json.Decode.field "code" Json.Decode.string)
-        (Json.Decode.field "message" Json.Decode.string)
-
-
-questionsDecoder : Json.Decode.Decoder (List Question)
-questionsDecoder =
-    Json.Decode.list
-        (Json.Decode.map
-            (\question ->
-                { question = question
-                }
-            )
-            (Json.Decode.field "question" Json.Decode.string)
-        )
 
 
 
@@ -164,23 +131,7 @@ view model =
                     Nothing ->
                         []
                )
-            ++ [ let
-                    verticalMargin =
-                        1
-                 in
-                 div
-                    [ css
-                        [ Css.displayFlex
-                        , Css.flexDirection Css.column
-                        , Css.backgroundColor (Css.hsl 49.1 0.2 0.95)
-                        , Css.padding2 (rem <| 1 - (verticalMargin / 2)) (rem 1)
-                        , Css.borderRadius (rem 0.5)
-                        , Global.children
-                            [ Global.everything [ Css.margin2 (rem <| verticalMargin / 2) zero ]
-                            ]
-                        ]
-                    ]
-                    (List.map questionCard model.questions)
+            ++ [ questionList model.questions
                , div [ css [ Css.marginTop (rem 1) ] ] [ newQuestion model.newQuestionInput ]
                ]
         )
@@ -199,6 +150,35 @@ stringFromError error =
 
         ParsingError errorMessage ->
             "There was an error with how the data looks like: " ++ errorMessage
+
+
+questionList : Fetched (List Question) -> Html Msg
+questionList fetchedQuestions =
+    let
+        verticalMargin =
+            1
+
+        contents =
+            case fetchedQuestions of
+                Loading ->
+                    [ text "Loading questions…" ]
+
+                Received questions ->
+                    List.map questionCard questions
+    in
+    div
+        [ css
+            [ Css.displayFlex
+            , Css.flexDirection Css.column
+            , Css.backgroundColor (Css.hsl 49.1 0.2 0.95)
+            , Css.padding2 (rem <| 1 - (verticalMargin / 2)) (rem 1)
+            , Css.borderRadius (rem 0.5)
+            , Global.children
+                [ Global.everything [ Css.margin2 (rem <| verticalMargin / 2) zero ]
+                ]
+            ]
+        ]
+        contents
 
 
 questionCard : Question -> Html Msg
@@ -231,3 +211,54 @@ card content =
             ]
         ]
         content
+
+
+
+--- SUBSCRIPTIONS
+
+
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    Sub.batch
+        [ receiveUser (Json.Decode.decodeValue userDecoder >> UserReceived)
+        , receiveQuestions (Json.Decode.decodeValue questionsDecoder >> QuestionsReceived)
+        , errorReceived (Json.Decode.decodeValue errorDecoder >> ErrorReceived)
+        ]
+
+
+port receiveQuestions : (Json.Encode.Value -> msg) -> Sub msg
+
+
+port errorReceived : (Json.Encode.Value -> msg) -> Sub msg
+
+
+port submitQuestion : Json.Encode.Value -> Cmd msg
+
+
+questionsDecoder : Json.Decode.Decoder (List Question)
+questionsDecoder =
+    Json.Decode.list
+        (Json.Decode.map
+            (\question ->
+                { question = question
+                }
+            )
+            (Json.Decode.field "question" Json.Decode.string)
+        )
+
+
+errorDecoder : Json.Decode.Decoder Error
+errorDecoder =
+    Json.Decode.map2
+        (\code errorMessage ->
+            FirestoreError { code = code, errorMessage = errorMessage }
+        )
+        (Json.Decode.field "code" Json.Decode.string)
+        (Json.Decode.field "message" Json.Decode.string)
+
+
+questionEncoder : Model -> Json.Encode.Value
+questionEncoder model =
+    Json.Encode.object
+        [ ( "question", Json.Encode.string model.newQuestionInput )
+        ]
