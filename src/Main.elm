@@ -10,13 +10,13 @@ import Html.Styled.Events exposing (onClick, onInput, onSubmit)
 import Json.Decode
 import Json.Decode.Pipeline
 import Json.Encode
+import Time
 
 
-main : Program () Model Msg
 main =
     Browser.element
         { view = view >> Html.toUnstyled
-        , init = \_ -> init
+        , init = init
         , update = update
         , subscriptions = subscriptions
         }
@@ -32,6 +32,12 @@ type alias Model =
     , newQuestionInput : String
     , user : Fetched User
     , error : Maybe Error
+
+    {- This allows us to specify that a server should add a timestamp
+       in a document's field.
+       See https://firebase.google.com/docs/firestore/manage-data/add-data#server_timestamp.
+    -}
+    , timestampField : TimestampField
     }
 
 
@@ -44,6 +50,7 @@ type alias Question =
     { id : QuestionId
     , question : String
     , userId : String
+    , createdAt : Maybe Time.Posix
     }
 
 
@@ -71,13 +78,22 @@ type Error
     | ParsingError String
 
 
-init : ( Model, Cmd Msg )
-init =
+type alias TimestampField =
+    Json.Decode.Value
+
+
+type alias Flags =
+    { timestampField : TimestampField }
+
+
+init : Flags -> ( Model, Cmd Msg )
+init flags =
     ( { questions = Loading
       , votes = Loading
       , newQuestionInput = ""
       , user = Loading
       , error = Nothing
+      , timestampField = flags.timestampField
       }
     , Cmd.none
     )
@@ -113,7 +129,31 @@ update msg model =
         QuestionsReceived result ->
             case result of
                 Ok questions ->
-                    ( { model | questions = Received questions }, Cmd.none )
+                    let
+                        sortedQuestions =
+                            List.sortWith
+                                (\first second ->
+                                    case ( first.createdAt, second.createdAt ) of
+                                        ( Just firstTS, Just secondTS ) ->
+                                            compare
+                                                (Time.posixToMillis firstTS)
+                                                (Time.posixToMillis secondTS)
+
+                                        {- A missing timestamp means that the item was added locally.
+                                           Then it should be sorted at the end of the, i.e., larger.
+                                        -}
+                                        ( Nothing, Just _ ) ->
+                                            GT
+
+                                        ( Just _, Nothing ) ->
+                                            LT
+
+                                        ( Nothing, Nothing ) ->
+                                            EQ
+                                )
+                                questions
+                    in
+                    ( { model | questions = Received sortedQuestions }, Cmd.none )
 
                 Err error ->
                     ( { model | error = Just (ParsingError (Json.Decode.errorToString error)) }, Cmd.none )
@@ -136,7 +176,7 @@ update msg model =
 
         SaveQuestion user ->
             ( { model | newQuestionInput = "" }
-            , submitQuestionCmd { question = model.newQuestionInput, userId = user.id }
+            , submitQuestionCmd model.timestampField { question = model.newQuestionInput, userId = user.id }
             )
 
         DeleteQuestion id ->
@@ -220,8 +260,10 @@ questionList fetchedQuestions currentUser votes =
             [ Css.displayFlex
             , Css.flexDirection Css.column
             , Css.backgroundColor (Css.hsl 49.1 0.2 0.95)
-            , Css.padding2 (rem <| 1 - (verticalMargin / 2)) (rem 1)
+            , Css.padding2 zero (rem 1)
             , Css.borderRadius (rem 0.5)
+            , Css.paddingTop (rem <| 1 - (verticalMargin / 2))
+            , Css.paddingBottom (rem <| 1 - (verticalMargin / 2))
             , Global.children
                 [ Global.everything [ Css.margin2 (rem <| verticalMargin / 2) zero ]
                 ]
@@ -283,11 +325,15 @@ questionCard currentUser fetchedVotes question =
                 []
     in
     card
-        ([ text question.question
-         ]
-            ++ maybeVoteButton
-            ++ maybeDeleteButton
-        )
+        [ div [ css [ Css.displayFlex, Css.flexDirection Css.column ] ]
+            [ text question.question
+            , div
+                []
+                (maybeVoteButton
+                    ++ maybeDeleteButton
+                )
+            ]
+        ]
 
 
 submitForm : Fetched User -> String -> Html Msg
@@ -347,9 +393,9 @@ type alias QuestionSubmission =
     { question : String, userId : String }
 
 
-submitQuestionCmd : QuestionSubmission -> Cmd msg
-submitQuestionCmd submission =
-    questionEncoder submission
+submitQuestionCmd : TimestampField -> QuestionSubmission -> Cmd msg
+submitQuestionCmd timestampField submission =
+    questionEncoder submission timestampField
         |> submitQuestion
 
 
@@ -403,17 +449,37 @@ userDecoder =
 questionsDecoder : Json.Decode.Decoder (List Question)
 questionsDecoder =
     Json.Decode.list
-        (Json.Decode.map3
-            (\id question userId ->
+        (Json.Decode.map4
+            (\id question userId createdAt ->
                 { id = id
                 , question = question
                 , userId = userId
+                , createdAt = createdAt
                 }
             )
             (Json.Decode.field "id" Json.Decode.string)
             (Json.Decode.field "question" Json.Decode.string)
             (Json.Decode.field "userId" Json.Decode.string)
+            (Json.Decode.field "createdAt" (Json.Decode.nullable timestampDecoder))
         )
+
+
+timestampDecoder : Json.Decode.Decoder Time.Posix
+timestampDecoder =
+    Json.Decode.map2
+        (\seconds nanoseconds ->
+            let
+                {- The nanoseconds count the fractions of seconds.
+                   See https://firebase.google.com/docs/reference/js/firebase.firestore.Timestamp.
+                -}
+                milliseconds =
+                    (toFloat seconds * 1000)
+                        + (toFloat nanoseconds / 1000000)
+            in
+            Time.millisToPosix (round milliseconds)
+        )
+        (Json.Decode.field "seconds" Json.Decode.int)
+        (Json.Decode.field "nanoseconds" Json.Decode.int)
 
 
 votesDecoder : Json.Decode.Decoder (List Vote)
@@ -440,11 +506,12 @@ errorDecoder =
         (Json.Decode.field "message" Json.Decode.string)
 
 
-questionEncoder : QuestionSubmission -> Json.Encode.Value
-questionEncoder { question, userId } =
+questionEncoder : QuestionSubmission -> TimestampField -> Json.Encode.Value
+questionEncoder { question, userId } timestampField =
     Json.Encode.object
         [ ( "question", Json.Encode.string question )
         , ( "userId", Json.Encode.string userId )
+        , ( "createdAt", timestampField )
         ]
 
 

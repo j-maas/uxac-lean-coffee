@@ -23,7 +23,10 @@ firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
 const app = Elm.Main.init({
-  node: document.getElementById("root")
+  node: document.getElementById("root"),
+  flags: {
+    timestampField: firebase.firestore.FieldValue.serverTimestamp(),
+  }
 });
 
 const question_collection_path = "test_questions"
