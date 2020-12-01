@@ -147,7 +147,7 @@ view model =
                     Nothing ->
                         []
                )
-            ++ [ questionList model.questions
+            ++ [ questionList model.questions model.user
                , submitForm model.user model.newQuestionInput
                ]
         )
@@ -168,8 +168,8 @@ stringFromError error =
             "There was an error with how the data looks like: " ++ errorMessage
 
 
-questionList : Fetched (List Question) -> Html Msg
-questionList fetchedQuestions =
+questionList : Fetched (List Question) -> Fetched User -> Html Msg
+questionList fetchedQuestions currentUser =
     let
         verticalMargin =
             1
@@ -180,7 +180,7 @@ questionList fetchedQuestions =
                     [ text "Loading questions…" ]
 
                 Received questions ->
-                    List.map questionCard questions
+                    List.map (questionCard currentUser) questions
     in
     div
         [ css
@@ -197,9 +197,29 @@ questionList fetchedQuestions =
         contents
 
 
-questionCard : Question -> Html Msg
-questionCard question =
-    card [ text question.question, button [ onClick (DeleteQuestion question.id) ] [ text "Delete" ] ]
+questionCard : Fetched User -> Question -> Html Msg
+questionCard currentUser question =
+    let
+        mayModifyQuestion =
+            case currentUser of
+                Loading ->
+                    False
+
+                Received user ->
+                    user.id == question.userId
+
+        maybeDeleteButton =
+            if mayModifyQuestion then
+                [ button [ onClick (DeleteQuestion question.id) ] [ text "Delete" ] ]
+
+            else
+                []
+    in
+    card
+        ([ text question.question
+         ]
+            ++ maybeDeleteButton
+        )
 
 
 submitForm : Fetched User -> String -> Html Msg
