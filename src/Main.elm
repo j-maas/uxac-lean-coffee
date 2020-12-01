@@ -1,10 +1,10 @@
 port module Main exposing (Model, Msg(..), init, main, update, view)
 
 import Browser
-import Css exposing (auto, px, rem, zero)
+import Css exposing (auto, pct, px, rem, zero)
 import Css.Global as Global
 import Html as PlainHtml
-import Html.Styled as Html exposing (Html, button, div, form, h1, h2, input, label, p, text)
+import Html.Styled as Html exposing (Html, button, div, form, h1, h2, input, label, p, text, textarea)
 import Html.Styled.Attributes exposing (css, placeholder, src, type_, value)
 import Html.Styled.Events exposing (onClick, onInput, onSubmit)
 import Json.Decode
@@ -220,8 +220,19 @@ view model =
                     Nothing ->
                         []
                )
-            ++ [ questionList model.questions model.user model.votes
-               , submitForm model.user model.newQuestionInput
+            ++ [ listing
+                    (questionList model.questions model.user model.votes
+                        ++ [ div []
+                                {- We need an extra div, because the listing applies a margin
+                                   to all its children which overrides our margin here.
+                                -}
+                                [ div
+                                    [ css [ Css.marginTop (rem 2) ]
+                                    ]
+                                    [ card <| [ submitForm model.user model.newQuestionInput ] ]
+                                ]
+                           ]
+                    )
                ]
         )
 
@@ -241,19 +252,11 @@ stringFromError error =
             "There was an error with how the data looks like: " ++ errorMessage
 
 
-questionList : Fetched (List Question) -> Fetched User -> Fetched (List Vote) -> Html Msg
-questionList fetchedQuestions currentUser votes =
+listing : List (Html Msg) -> Html Msg
+listing contents =
     let
         verticalMargin =
             1
-
-        contents =
-            case fetchedQuestions of
-                Loading ->
-                    [ text "Loading questions…" ]
-
-                Received questions ->
-                    List.map (questionCard currentUser votes) questions
     in
     div
         [ css
@@ -270,6 +273,16 @@ questionList fetchedQuestions currentUser votes =
             ]
         ]
         contents
+
+
+questionList : Fetched (List Question) -> Fetched User -> Fetched (List Vote) -> List (Html Msg)
+questionList fetchedQuestions currentUser votes =
+    case fetchedQuestions of
+        Loading ->
+            [ text "Loading questions…" ]
+
+        Received questions ->
+            List.map (questionCard currentUser votes) questions
 
 
 questionCard : Fetched User -> Fetched (List Vote) -> Question -> Html Msg
@@ -363,14 +376,12 @@ questionCard currentUser fetchedVotes question =
 
 submitForm : Fetched User -> String -> Html Msg
 submitForm fetchedUser currentInput =
-    div [ css [ Css.marginTop (rem 1) ] ]
-        [ case fetchedUser of
-            Loading ->
-                text "Connecting to database…"
+    case fetchedUser of
+        Loading ->
+            text "Logging you in…"
 
-            Received user ->
-                newQuestion user currentInput
-        ]
+        Received user ->
+            newQuestion user currentInput
 
 
 newQuestion : User -> String -> Html Msg
@@ -379,11 +390,16 @@ newQuestion user currentInput =
         [ css [ Css.displayFlex, Css.flexDirection Css.column, Css.alignItems Css.flexStart ]
         , onSubmit (SaveQuestion user)
         ]
-        [ label [ css [ Css.displayFlex, Css.flexDirection Css.column ] ]
+        [ label [ css [ Css.displayFlex, Css.flexDirection Css.column, Css.width (pct 100) ] ]
             [ text "Your question"
-            , input [ value currentInput, onInput NewQuestionInputChanged ] []
-            , input [ type_ "submit", value "Submit", css [ buttonStyle ] ] []
+            , input
+                [ value currentInput
+                , onInput NewQuestionInputChanged
+                , css [ Css.padding2 (rem 0.5) (rem 0.5) ]
+                ]
+                []
             ]
+        , input [ type_ "submit", value "Submit", css [ buttonStyle, Css.marginTop (rem 1) ] ] []
         ]
 
 
