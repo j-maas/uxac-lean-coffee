@@ -6,7 +6,7 @@ import Css.Global as Global
 import Html as PlainHtml
 import Html.Styled as Html exposing (Html, button, div, form, h1, h2, input, label, p, text)
 import Html.Styled.Attributes exposing (css, placeholder, src, type_, value)
-import Html.Styled.Events exposing (onInput, onSubmit)
+import Html.Styled.Events exposing (onClick, onInput, onSubmit)
 import Json.Decode
 import Json.Decode.Pipeline
 import Json.Encode
@@ -40,12 +40,14 @@ type Fetched a
 
 
 type alias Question =
-    { question : String
+    { id : String
+    , question : String
+    , userId : String
     }
 
 
 type alias User =
-    { uid : String
+    { id : String
     }
 
 
@@ -73,6 +75,7 @@ type Msg
     = UserReceived (Result Json.Decode.Error User)
     | QuestionsReceived (Result Json.Decode.Error (List Question))
     | SaveQuestion User
+    | DeleteQuestion String
     | ErrorReceived (Result Json.Decode.Error Error)
     | NewQuestionInputChanged String
 
@@ -105,11 +108,12 @@ update msg model =
                     ( { model | error = Just (ParsingError (Json.Decode.errorToString error)) }, Cmd.none )
 
         SaveQuestion user ->
-            let
-                submitCmd =
-                    submitQuestionCmd { question = model.newQuestionInput, userUid = user.uid }
-            in
-            ( { model | newQuestionInput = "" }, submitCmd )
+            ( { model | newQuestionInput = "" }
+            , submitQuestionCmd { question = model.newQuestionInput, userId = user.id }
+            )
+
+        DeleteQuestion id ->
+            ( model, deleteQuestionCmd id )
 
         NewQuestionInputChanged value ->
             ( { model | newQuestionInput = value }, Cmd.none )
@@ -195,7 +199,7 @@ questionList fetchedQuestions =
 
 questionCard : Question -> Html Msg
 questionCard question =
-    card [ text question.question ]
+    card [ text question.question, button [ onClick (DeleteQuestion question.id) ] [ text "Delete" ] ]
 
 
 submitForm : Fetched User -> String -> Html Msg
@@ -251,13 +255,18 @@ subscriptions model =
 
 
 type alias QuestionSubmission =
-    { question : String, userUid : String }
+    { question : String, userId : String }
 
 
 submitQuestionCmd : QuestionSubmission -> Cmd msg
 submitQuestionCmd submission =
     questionEncoder submission
         |> submitQuestion
+
+
+deleteQuestionCmd : String -> Cmd msg
+deleteQuestionCmd questionId =
+    deleteQuestion questionId
 
 
 port receiveUser : (Json.Encode.Value -> msg) -> Sub msg
@@ -272,21 +281,28 @@ port errorReceived : (Json.Encode.Value -> msg) -> Sub msg
 port submitQuestion : Json.Encode.Value -> Cmd msg
 
 
+port deleteQuestion : String -> Cmd msg
+
+
 userDecoder : Json.Decode.Decoder User
 userDecoder =
-    Json.Decode.field "uid" Json.Decode.string
-        |> Json.Decode.map (\uid -> { uid = uid })
+    Json.Decode.field "id" Json.Decode.string
+        |> Json.Decode.map (\id -> { id = id })
 
 
 questionsDecoder : Json.Decode.Decoder (List Question)
 questionsDecoder =
     Json.Decode.list
-        (Json.Decode.map
-            (\question ->
-                { question = question
+        (Json.Decode.map3
+            (\id question userId ->
+                { id = id
+                , question = question
+                , userId = userId
                 }
             )
+            (Json.Decode.field "id" Json.Decode.string)
             (Json.Decode.field "question" Json.Decode.string)
+            (Json.Decode.field "userId" Json.Decode.string)
         )
 
 
@@ -301,8 +317,8 @@ errorDecoder =
 
 
 questionEncoder : QuestionSubmission -> Json.Encode.Value
-questionEncoder { question, userUid } =
+questionEncoder { question, userId } =
     Json.Encode.object
         [ ( "question", Json.Encode.string question )
-        , ( "userUid", Json.Encode.string userUid )
+        , ( "userId", Json.Encode.string userId )
         ]

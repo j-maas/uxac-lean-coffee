@@ -30,17 +30,19 @@ const question_collection_path = "test"
 
 firebase.auth().signInAnonymously()
   .then(user => {
-    console.log("User is logged in.")
-    const uid = user.user.uid
+    const id = user.user.uid
+    console.log(`User is logged in with id ${id}.`)
 
-    app.ports.receiveUser.send({ uid: uid })
+    app.ports.receiveUser.send({ id: id })
   })
 
 db.collection(question_collection_path).onSnapshot(docs => {
   const questions = [];
 
   docs.forEach(doc => {
-    questions.push(doc.data());
+    const question = doc.data();
+    question.id = doc.id;
+    questions.push(question);
   });
 
   console.log("Received new questions: ", questions);
@@ -52,6 +54,19 @@ app.ports.submitQuestion.subscribe(data => {
 
   db.collection(question_collection_path)
     .add(data)
+    .catch(error => {
+      app.ports.error.send({
+        code: error.code,
+        message: error.message
+      });
+    });
+});
+
+app.ports.deleteQuestion.subscribe(id => {
+  console.log(`Deleting question with id ${id}.`);
+
+  db.collection(question_collection_path).doc(id)
+    .delete()
     .catch(error => {
       app.ports.error.send({
         code: error.code,
