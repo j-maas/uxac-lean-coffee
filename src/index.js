@@ -66,57 +66,53 @@ db.collection(votes_collection_path).onSnapshot(docs => {
 });
 
 app.ports.submitQuestion.subscribe(data => {
-  console.log("Submitting question to database: ",  data);
+  console.log("Submitting question to database: ", data);
 
   db.collection(question_collection_path)
     .add(data)
-    .catch(error => {
-      app.ports.error.send({
-        code: error.code,
-        message: error.message
-      });
-    });
+    .catch(sendErrorToElm);
 });
 
 app.ports.deleteQuestion.subscribe(id => {
   console.log(`Deleting question with id ${id}.`);
 
+  db.collection(votes_collection_path).where("questionId", "==", id)
+    .get()
+    .then(votes => {
+      votes.forEach(vote => {
+        vote.ref.delete();
+      });
+    })
+    .catch(sendErrorToElm);
+
   db.collection(question_collection_path).doc(id)
     .delete()
-    .catch(error => {
-      app.ports.error.send({
-        code: error.code,
-        message: error.message
-      });
-    });
+    .catch(sendErrorToElm);
 });
 
 app.ports.submitVote.subscribe(data => {
   db.collection(votes_collection_path)
     .doc(getVoteId(data))
     .set(data)
-    .catch(error => {
-      app.ports.error.send({
-        code: error.code,
-        message: error.message
-      });
-    });
+    .catch(sendErrorToElm);
 });
 
 app.ports.retractVote.subscribe(data => {
   db.collection(votes_collection_path)
     .doc(getVoteId(data))
     .delete()
-    .catch(error => {
-      app.ports.error.send({
-        code: error.code,
-        message: error.message
-      });
-    });
+    .catch(sendErrorToElm);
 });
 
 function getVoteId(data) {
   return `${data.userId}:${data.questionId}`;
+}
+
+function sendErrorToElm(error) {
+  app.ports.error.send({
+    code: error.code,
+    message: error.message
+  });
 }
 
 registerServiceWorker();
