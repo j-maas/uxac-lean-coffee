@@ -214,16 +214,27 @@ view model =
                     Nothing ->
                         []
                )
-            ++ (case model.topics of
-                    Got topics ->
-                        if not (TopicList.isSorted voteCountMap topics) then
-                            [ sortButton ]
+            ++ (let
+                    showButton =
+                        case model.topics of
+                            Got topics ->
+                                if not (TopicList.isSorted voteCountMap topics) then
+                                    True
+
+                                else
+                                    False
+
+                            _ ->
+                                False
+
+                    visibility =
+                        if showButton then
+                            Css.visibility Css.visible
 
                         else
-                            []
-
-                    _ ->
-                        []
+                            Css.visibility Css.hidden
+                in
+                [ div [ css [ visibility ] ] [ sortBar ] ]
                )
             ++ [ listing
                     (topicList (Remote.map TopicList.toList model.topics) model.user model.votes
@@ -255,6 +266,18 @@ stringFromError error =
 
         ParsingError errorMessage ->
             "There was an error with how the data looks like: " ++ errorMessage
+
+
+sortBar : Html Msg
+sortBar =
+    div
+        [ css
+            [ Css.displayFlex
+            , Css.flexDirection Css.row
+            , Css.alignItems Css.center
+            ]
+        ]
+        [ text "The topics have been updated.", div [ css [ Css.marginLeft (rem 1) ] ] [ sortButton ] ]
 
 
 sortButton : Html Msg
