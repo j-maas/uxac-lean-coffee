@@ -126,7 +126,21 @@ update msg model =
         VotesReceived result ->
             case result of
                 Ok votes ->
-                    ( { model | votes = Got votes }, Cmd.none )
+                    let
+                        newModel =
+                            case model.votes of
+                                Loading ->
+                                    { model
+                                        | votes = Got votes
+
+                                        -- If the votes are coming in for the first time, immediately sort the topics.
+                                        , topics = Remote.map (TopicList.sort voteCountMap) model.topics
+                                    }
+
+                                Got _ ->
+                                    { model | votes = Got votes }
+                    in
+                    ( newModel, Cmd.none )
 
                 Err error ->
                     ( { model | error = Just (ParsingError (Json.Decode.errorToString error)) }, Cmd.none )
