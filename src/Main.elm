@@ -3,6 +3,7 @@ port module Main exposing (Model, Msg(..), init, main, update, view)
 import Browser
 import Css exposing (auto, pct, px, rem, zero)
 import Css.Global as Global
+import Dict exposing (Dict)
 import Html as PlainHtml
 import Html.Styled as Html exposing (Html, button, div, form, h1, h2, input, label, p, text, textarea)
 import Html.Styled.Attributes exposing (css, placeholder, src, type_, value)
@@ -10,6 +11,8 @@ import Html.Styled.Events exposing (onClick, onInput, onSubmit)
 import Json.Decode
 import Json.Decode.Pipeline
 import Json.Encode
+import Remote exposing (Remote(..))
+import SortedList exposing (SortedList)
 import Time
 
 
@@ -27,10 +30,10 @@ main =
 
 
 type alias Model =
-    { topics : Fetched (List Topic)
-    , votes : Fetched (List Vote)
+    { topics : Remote TopicList
+    , votes : Remote Votes
     , newTopicInput : String
-    , user : Fetched User
+    , user : Remote User
     , error : Maybe Error
 
     {- This allows us to specify that a server should add a timestamp
@@ -41,9 +44,8 @@ type alias Model =
     }
 
 
-type Fetched a
-    = Loading
-    | Received a
+type alias TopicList =
+    SortedList Topic
 
 
 type alias Topic =
@@ -58,10 +60,8 @@ type alias TopicId =
     String
 
 
-type alias Vote =
-    { topicId : TopicId
-    , userId : UserId
-    }
+type alias Votes =
+    Dict TopicId (List UserId)
 
 
 type alias User =
@@ -106,7 +106,7 @@ init flags =
 type Msg
     = UserReceived (Result Json.Decode.Error User)
     | TopicsReceived (Result Json.Decode.Error (List Topic))
-    | VotesReceived (Result Json.Decode.Error (List Vote))
+    | VotesReceived (Result Json.Decode.Error Votes)
     | SaveTopic User
     | DeleteTopic TopicId
     | Upvote User Topic
@@ -121,7 +121,7 @@ update msg model =
         UserReceived result ->
             case result of
                 Ok user ->
-                    ( { model | user = Received user }, Cmd.none )
+                    ( { model | user = Got user }, Cmd.none )
 
                 Err error ->
                     ( { model | error = Just (ParsingError (Json.Decode.errorToString error)) }, Cmd.none )
@@ -129,31 +129,7 @@ update msg model =
         TopicsReceived result ->
             case result of
                 Ok topics ->
-                    let
-                        sortedTopics =
-                            List.sortWith
-                                (\first second ->
-                                    case ( first.createdAt, second.createdAt ) of
-                                        ( Just firstTS, Just secondTS ) ->
-                                            compare
-                                                (Time.posixToMillis firstTS)
-                                                (Time.posixToMillis secondTS)
-
-                                        {- A missing timestamp means that the item was added locally.
-                                           Then it should be sorted at the end of the, i.e., larger.
-                                        -}
-                                        ( Nothing, Just _ ) ->
-                                            GT
-
-                                        ( Just _, Nothing ) ->
-                                            LT
-
-                                        ( Nothing, Nothing ) ->
-                                            EQ
-                                )
-                                topics
-                    in
-                    ( { model | topics = Received sortedTopics }, Cmd.none )
+                    ( { model | topics = Got (SortedList.from topics) }, Cmd.none )
 
                 Err error ->
                     ( { model | error = Just (ParsingError (Json.Decode.errorToString error)) }, Cmd.none )
@@ -161,7 +137,7 @@ update msg model =
         VotesReceived result ->
             case result of
                 Ok votes ->
-                    ( { model | votes = Received votes }, Cmd.none )
+                    ( { model | votes = Got votes }, Cmd.none )
 
                 Err error ->
                     ( { model | error = Just (ParsingError (Json.Decode.errorToString error)) }, Cmd.none )
@@ -221,7 +197,7 @@ view model =
                         []
                )
             ++ [ listing
-                    (topicList model.topics model.user model.votes
+                    (topicList (Remote.map SortedList.current model.topics) model.user model.votes
                         ++ [ div []
                                 {- We need an extra div, because the listing applies a margin
                                    to all its children which overrides our margin here.
@@ -275,32 +251,33 @@ listing contents =
         contents
 
 
-topicList : Fetched (List Topic) -> Fetched User -> Fetched (List Vote) -> List (Html Msg)
+topicList : Remote (List Topic) -> Remote User -> Remote Votes -> List (Html Msg)
 topicList fetchedTopics currentUser votes =
     case fetchedTopics of
         Loading ->
             [ text "Loading topics…" ]
 
-        Received topics ->
+        Got topics ->
             List.map (topicCard currentUser votes) topics
 
 
-topicCard : Fetched User -> Fetched (List Vote) -> Topic -> Html Msg
+topicCard : Remote User -> Remote Votes -> Topic -> Html Msg
 topicCard currentUser fetchedVotes topic =
     let
         maybeVoteButton =
             case ( currentUser, fetchedVotes ) of
-                ( Received user, Received votes ) ->
+                ( Got user, Got votes ) ->
                     let
                         votesForThis =
-                            List.filter (\{ topicId } -> topicId == topic.id) votes
+                            Dict.get topic.id votes
+                                |> Maybe.withDefault []
 
                         voteCount =
                             votesForThis
                                 |> List.length
 
                         userAlreadyVoted =
-                            List.any (\{ userId } -> userId == user.id) votesForThis
+                            List.any (\userId -> userId == user.id) votesForThis
 
                         state =
                             if userAlreadyVoted then
@@ -341,7 +318,7 @@ topicCard currentUser fetchedVotes topic =
                 Loading ->
                     False
 
-                Received user ->
+                Got user ->
                     user.id == topic.userId
 
         maybeDeleteButton =
@@ -374,13 +351,13 @@ topicCard currentUser fetchedVotes topic =
         ]
 
 
-submitForm : Fetched User -> String -> Html Msg
+submitForm : Remote User -> String -> Html Msg
 submitForm fetchedUser currentInput =
     case fetchedUser of
         Loading ->
             text "Logging you in…"
 
-        Received user ->
+        Got user ->
             newTopic user currentInput
 
 
@@ -541,18 +518,32 @@ timestampDecoder =
         (Json.Decode.field "nanoseconds" Json.Decode.int)
 
 
-votesDecoder : Json.Decode.Decoder (List Vote)
+votesDecoder : Json.Decode.Decoder Votes
 votesDecoder =
     Json.Decode.list
         (Json.Decode.map2
             (\topicId userId ->
-                { topicId = topicId
-                , userId = userId
-                }
+                ( topicId, userId )
             )
             (Json.Decode.field "topicId" Json.Decode.string)
             (Json.Decode.field "userId" Json.Decode.string)
         )
+        |> Json.Decode.map
+            (List.foldl
+                (\( topicId, userId ) dict ->
+                    Dict.update topicId
+                        (\maybeUsers ->
+                            case maybeUsers of
+                                Nothing ->
+                                    Just [ userId ]
+
+                                Just users ->
+                                    Just (userId :: users)
+                        )
+                        dict
+                )
+                Dict.empty
+            )
 
 
 errorDecoder : Json.Decode.Decoder Error
