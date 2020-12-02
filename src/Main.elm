@@ -277,7 +277,7 @@ sortBar =
             , Css.alignItems Css.center
             ]
         ]
-        [ text "The topics have been updated.", div [ css [ Css.marginLeft (rem 1) ] ] [ sortButton ] ]
+        [ text "The topics' order has changed.", div [ css [ Css.marginLeft (rem 1) ] ] [ sortButton ] ]
 
 
 sortButton : Html Msg
