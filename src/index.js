@@ -29,7 +29,7 @@ const app = Elm.Main.init({
   }
 });
 
-const question_collection_path = "test_questions"
+const topic_collection_path = "test_topics"
 const votes_collection_path = "test_votes"
 
 firebase.auth().signInAnonymously()
@@ -40,17 +40,17 @@ firebase.auth().signInAnonymously()
     app.ports.receiveUser.send({ id: id })
   })
 
-db.collection(question_collection_path).onSnapshot(docs => {
-  const questions = [];
+db.collection(topic_collection_path).onSnapshot(docs => {
+  const topics = [];
 
   docs.forEach(doc => {
-    const question = doc.data();
-    question.id = doc.id;
-    questions.push(question);
+    const topic = doc.data();
+    topic.id = doc.id;
+    topics.push(topic);
   });
 
-  console.log("Received new questions: ", questions);
-  app.ports.receiveQuestions.send(questions);
+  console.log("Received new topics: ", topics);
+  app.ports.receiveTopics.send(topics);
 });
 
 db.collection(votes_collection_path).onSnapshot(docs => {
@@ -65,18 +65,18 @@ db.collection(votes_collection_path).onSnapshot(docs => {
   app.ports.receiveVotes.send(votes);
 });
 
-app.ports.submitQuestion.subscribe(data => {
-  console.log("Submitting question to database: ", data);
+app.ports.submitTopic.subscribe(data => {
+  console.log("Submitting topic to database: ", data);
 
-  db.collection(question_collection_path)
+  db.collection(topic_collection_path)
     .add(data)
     .catch(sendErrorToElm);
 });
 
-app.ports.deleteQuestion.subscribe(id => {
-  console.log(`Deleting question with id ${id}.`);
+app.ports.deleteTopic.subscribe(id => {
+  console.log(`Deleting topic with id ${id}.`);
 
-  db.collection(votes_collection_path).where("questionId", "==", id)
+  db.collection(votes_collection_path).where("topicId", "==", id)
     .get()
     .then(votes => {
       votes.forEach(vote => {
@@ -85,7 +85,7 @@ app.ports.deleteQuestion.subscribe(id => {
     })
     .catch(sendErrorToElm);
 
-  db.collection(question_collection_path).doc(id)
+  db.collection(topic_collection_path).doc(id)
     .delete()
     .catch(sendErrorToElm);
 });
@@ -105,7 +105,7 @@ app.ports.retractVote.subscribe(data => {
 });
 
 function getVoteId(data) {
-  return `${data.userId}:${data.questionId}`;
+  return `${data.userId}:${data.topicId}`;
 }
 
 function sendErrorToElm(error) {

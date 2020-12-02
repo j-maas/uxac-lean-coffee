@@ -27,9 +27,9 @@ main =
 
 
 type alias Model =
-    { questions : Fetched (List Question)
+    { topics : Fetched (List Topic)
     , votes : Fetched (List Vote)
-    , newQuestionInput : String
+    , newTopicInput : String
     , user : Fetched User
     , error : Maybe Error
 
@@ -46,20 +46,20 @@ type Fetched a
     | Received a
 
 
-type alias Question =
-    { id : QuestionId
-    , question : String
+type alias Topic =
+    { id : TopicId
+    , topic : String
     , userId : String
     , createdAt : Maybe Time.Posix
     }
 
 
-type alias QuestionId =
+type alias TopicId =
     String
 
 
 type alias Vote =
-    { questionId : QuestionId
+    { topicId : TopicId
     , userId : UserId
     }
 
@@ -88,9 +88,9 @@ type alias Flags =
 
 init : Flags -> ( Model, Cmd Msg )
 init flags =
-    ( { questions = Loading
+    ( { topics = Loading
       , votes = Loading
-      , newQuestionInput = ""
+      , newTopicInput = ""
       , user = Loading
       , error = Nothing
       , timestampField = flags.timestampField
@@ -105,14 +105,14 @@ init flags =
 
 type Msg
     = UserReceived (Result Json.Decode.Error User)
-    | QuestionsReceived (Result Json.Decode.Error (List Question))
+    | TopicsReceived (Result Json.Decode.Error (List Topic))
     | VotesReceived (Result Json.Decode.Error (List Vote))
-    | SaveQuestion User
-    | DeleteQuestion QuestionId
-    | Upvote User Question
-    | RemoveUpvote User Question
+    | SaveTopic User
+    | DeleteTopic TopicId
+    | Upvote User Topic
+    | RemoveUpvote User Topic
     | ErrorReceived (Result Json.Decode.Error Error)
-    | NewQuestionInputChanged String
+    | NewTopicInputChanged String
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -126,11 +126,11 @@ update msg model =
                 Err error ->
                     ( { model | error = Just (ParsingError (Json.Decode.errorToString error)) }, Cmd.none )
 
-        QuestionsReceived result ->
+        TopicsReceived result ->
             case result of
-                Ok questions ->
+                Ok topics ->
                     let
-                        sortedQuestions =
+                        sortedTopics =
                             List.sortWith
                                 (\first second ->
                                     case ( first.createdAt, second.createdAt ) of
@@ -151,9 +151,9 @@ update msg model =
                                         ( Nothing, Nothing ) ->
                                             EQ
                                 )
-                                questions
+                                topics
                     in
-                    ( { model | questions = Received sortedQuestions }, Cmd.none )
+                    ( { model | topics = Received sortedTopics }, Cmd.none )
 
                 Err error ->
                     ( { model | error = Just (ParsingError (Json.Decode.errorToString error)) }, Cmd.none )
@@ -174,22 +174,22 @@ update msg model =
                 Err error ->
                     ( { model | error = Just (ParsingError (Json.Decode.errorToString error)) }, Cmd.none )
 
-        SaveQuestion user ->
-            ( { model | newQuestionInput = "" }
-            , submitQuestionCmd model.timestampField { question = model.newQuestionInput, userId = user.id }
+        SaveTopic user ->
+            ( { model | newTopicInput = "" }
+            , submitTopicCmd model.timestampField { topic = model.newTopicInput, userId = user.id }
             )
 
-        DeleteQuestion id ->
-            ( model, deleteQuestionCmd id )
+        DeleteTopic id ->
+            ( model, deleteTopicCmd id )
 
-        Upvote user question ->
-            ( model, submitVoteCmd user question )
+        Upvote user topic ->
+            ( model, submitVoteCmd user topic )
 
-        RemoveUpvote user question ->
-            ( model, retractVoteCmd user question )
+        RemoveUpvote user topic ->
+            ( model, retractVoteCmd user topic )
 
-        NewQuestionInputChanged value ->
-            ( { model | newQuestionInput = value }, Cmd.none )
+        NewTopicInputChanged value ->
+            ( { model | newTopicInput = value }, Cmd.none )
 
 
 
@@ -221,7 +221,7 @@ view model =
                         []
                )
             ++ [ listing
-                    (questionList model.questions model.user model.votes
+                    (topicList model.topics model.user model.votes
                         ++ [ div []
                                 {- We need an extra div, because the listing applies a margin
                                    to all its children which overrides our margin here.
@@ -229,7 +229,7 @@ view model =
                                 [ div
                                     [ css [ Css.marginTop (rem 2) ]
                                     ]
-                                    [ card <| [ submitForm model.user model.newQuestionInput ] ]
+                                    [ card <| [ submitForm model.user model.newTopicInput ] ]
                                 ]
                            ]
                     )
@@ -275,32 +275,32 @@ listing contents =
         contents
 
 
-questionList : Fetched (List Question) -> Fetched User -> Fetched (List Vote) -> List (Html Msg)
-questionList fetchedQuestions currentUser votes =
-    case fetchedQuestions of
+topicList : Fetched (List Topic) -> Fetched User -> Fetched (List Vote) -> List (Html Msg)
+topicList fetchedTopics currentUser votes =
+    case fetchedTopics of
         Loading ->
-            [ text "Loading questions…" ]
+            [ text "Loading topics…" ]
 
-        Received questions ->
-            List.map (questionCard currentUser votes) questions
+        Received topics ->
+            List.map (topicCard currentUser votes) topics
 
 
-questionCard : Fetched User -> Fetched (List Vote) -> Question -> Html Msg
-questionCard currentUser fetchedVotes question =
+topicCard : Fetched User -> Fetched (List Vote) -> Topic -> Html Msg
+topicCard currentUser fetchedVotes topic =
     let
         maybeVoteButton =
             case ( currentUser, fetchedVotes ) of
                 ( Received user, Received votes ) ->
                     let
-                        votesForThisQuestion =
-                            List.filter (\{ questionId } -> questionId == question.id) votes
+                        votesForThis =
+                            List.filter (\{ topicId } -> topicId == topic.id) votes
 
                         voteCount =
-                            votesForThisQuestion
+                            votesForThis
                                 |> List.length
 
                         userAlreadyVoted =
-                            List.any (\{ userId } -> userId == user.id) votesForThisQuestion
+                            List.any (\{ userId } -> userId == user.id) votesForThis
 
                         state =
                             if userAlreadyVoted then
@@ -320,7 +320,7 @@ questionCard currentUser fetchedVotes question =
                                 }
                     in
                     [ button
-                        [ onClick (state.action user question)
+                        [ onClick (state.action user topic)
                         , css
                             [ buttonStyle
                             , Css.backgroundColor (Css.hsl primaryHue state.saturation state.lightness)
@@ -336,18 +336,18 @@ questionCard currentUser fetchedVotes question =
                 _ ->
                     []
 
-        mayModifyQuestion =
+        mayModify =
             case currentUser of
                 Loading ->
                     False
 
                 Received user ->
-                    user.id == question.userId
+                    user.id == topic.userId
 
         maybeDeleteButton =
-            if mayModifyQuestion then
+            if mayModify then
                 [ button
-                    [ onClick (DeleteQuestion question.id)
+                    [ onClick (DeleteTopic topic.id)
                     , css [ buttonStyle ]
                     ]
                     [ text "Delete" ]
@@ -358,7 +358,7 @@ questionCard currentUser fetchedVotes question =
     in
     card
         [ div [ css [ Css.displayFlex, Css.flexDirection Css.column ] ]
-            [ text question.question
+            [ text topic.topic
             , div
                 [ css
                     [ Css.marginTop (rem 1)
@@ -381,20 +381,20 @@ submitForm fetchedUser currentInput =
             text "Logging you in…"
 
         Received user ->
-            newQuestion user currentInput
+            newTopic user currentInput
 
 
-newQuestion : User -> String -> Html Msg
-newQuestion user currentInput =
+newTopic : User -> String -> Html Msg
+newTopic user currentInput =
     form
         [ css [ Css.displayFlex, Css.flexDirection Css.column, Css.alignItems Css.flexStart ]
-        , onSubmit (SaveQuestion user)
+        , onSubmit (SaveTopic user)
         ]
         [ label [ css [ Css.displayFlex, Css.flexDirection Css.column, Css.width (pct 100) ] ]
-            [ text "Your question"
+            [ text "Your topic"
             , input
                 [ value currentInput
-                , onInput NewQuestionInputChanged
+                , onInput NewTopicInputChanged
                 , css [ Css.padding2 (rem 0.5) (rem 0.5) ]
                 ]
                 []
@@ -442,43 +442,43 @@ subscriptions : Model -> Sub Msg
 subscriptions model =
     Sub.batch
         [ receiveUser (Json.Decode.decodeValue userDecoder >> UserReceived)
-        , receiveQuestions (Json.Decode.decodeValue questionsDecoder >> QuestionsReceived)
+        , receiveTopics (Json.Decode.decodeValue topicsDecoder >> TopicsReceived)
         , receiveVotes (Json.Decode.decodeValue votesDecoder >> VotesReceived)
         , errorReceived (Json.Decode.decodeValue errorDecoder >> ErrorReceived)
         ]
 
 
-type alias QuestionSubmission =
-    { question : String, userId : String }
+type alias TopicSubmission =
+    { topic : String, userId : String }
 
 
-submitQuestionCmd : TimestampField -> QuestionSubmission -> Cmd msg
-submitQuestionCmd timestampField submission =
-    questionEncoder submission timestampField
-        |> submitQuestion
+submitTopicCmd : TimestampField -> TopicSubmission -> Cmd msg
+submitTopicCmd timestampField submission =
+    topicEncoder submission timestampField
+        |> submitTopic
 
 
-deleteQuestionCmd : String -> Cmd msg
-deleteQuestionCmd questionId =
-    deleteQuestion questionId
+deleteTopicCmd : String -> Cmd msg
+deleteTopicCmd topicId =
+    deleteTopic topicId
 
 
-submitVoteCmd : User -> Question -> Cmd msg
-submitVoteCmd user question =
-    voteEncoder user question
+submitVoteCmd : User -> Topic -> Cmd msg
+submitVoteCmd user topic =
+    voteEncoder user topic
         |> submitVote
 
 
-retractVoteCmd : User -> Question -> Cmd msg
-retractVoteCmd user question =
-    voteEncoder user question
+retractVoteCmd : User -> Topic -> Cmd msg
+retractVoteCmd user topic =
+    voteEncoder user topic
         |> retractVote
 
 
 port receiveUser : (Json.Encode.Value -> msg) -> Sub msg
 
 
-port receiveQuestions : (Json.Encode.Value -> msg) -> Sub msg
+port receiveTopics : (Json.Encode.Value -> msg) -> Sub msg
 
 
 port receiveVotes : (Json.Encode.Value -> msg) -> Sub msg
@@ -487,10 +487,10 @@ port receiveVotes : (Json.Encode.Value -> msg) -> Sub msg
 port errorReceived : (Json.Encode.Value -> msg) -> Sub msg
 
 
-port submitQuestion : Json.Encode.Value -> Cmd msg
+port submitTopic : Json.Encode.Value -> Cmd msg
 
 
-port deleteQuestion : String -> Cmd msg
+port deleteTopic : String -> Cmd msg
 
 
 port submitVote : Json.Encode.Value -> Cmd msg
@@ -505,19 +505,19 @@ userDecoder =
         |> Json.Decode.map (\id -> { id = id })
 
 
-questionsDecoder : Json.Decode.Decoder (List Question)
-questionsDecoder =
+topicsDecoder : Json.Decode.Decoder (List Topic)
+topicsDecoder =
     Json.Decode.list
         (Json.Decode.map4
-            (\id question userId createdAt ->
+            (\id topic userId createdAt ->
                 { id = id
-                , question = question
+                , topic = topic
                 , userId = userId
                 , createdAt = createdAt
                 }
             )
             (Json.Decode.field "id" Json.Decode.string)
-            (Json.Decode.field "question" Json.Decode.string)
+            (Json.Decode.field "topic" Json.Decode.string)
             (Json.Decode.field "userId" Json.Decode.string)
             (Json.Decode.field "createdAt" (Json.Decode.nullable timestampDecoder))
         )
@@ -545,12 +545,12 @@ votesDecoder : Json.Decode.Decoder (List Vote)
 votesDecoder =
     Json.Decode.list
         (Json.Decode.map2
-            (\questionId userId ->
-                { questionId = questionId
+            (\topicId userId ->
+                { topicId = topicId
                 , userId = userId
                 }
             )
-            (Json.Decode.field "questionId" Json.Decode.string)
+            (Json.Decode.field "topicId" Json.Decode.string)
             (Json.Decode.field "userId" Json.Decode.string)
         )
 
@@ -565,18 +565,18 @@ errorDecoder =
         (Json.Decode.field "message" Json.Decode.string)
 
 
-questionEncoder : QuestionSubmission -> TimestampField -> Json.Encode.Value
-questionEncoder { question, userId } timestampField =
+topicEncoder : TopicSubmission -> TimestampField -> Json.Encode.Value
+topicEncoder { topic, userId } timestampField =
     Json.Encode.object
-        [ ( "question", Json.Encode.string question )
+        [ ( "topic", Json.Encode.string topic )
         , ( "userId", Json.Encode.string userId )
         , ( "createdAt", timestampField )
         ]
 
 
-voteEncoder : User -> Question -> Json.Encode.Value
-voteEncoder user question =
+voteEncoder : User -> Topic -> Json.Encode.Value
+voteEncoder user topic =
     Json.Encode.object
         [ ( "userId", Json.Encode.string user.id )
-        , ( "questionId", Json.Encode.string question.id )
+        , ( "topicId", Json.Encode.string topic.id )
         ]
