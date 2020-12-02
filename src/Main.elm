@@ -12,8 +12,8 @@ import Json.Decode
 import Json.Decode.Pipeline
 import Json.Encode
 import Remote exposing (Remote(..))
-import SortedList exposing (SortedList)
 import Time
+import TopicList exposing (Topic, TopicId, TopicList, VoteCountMap)
 
 
 main =
@@ -42,22 +42,6 @@ type alias Model =
     -}
     , timestampField : TimestampField
     }
-
-
-type alias TopicList =
-    SortedList Topic
-
-
-type alias Topic =
-    { id : TopicId
-    , topic : String
-    , userId : String
-    , createdAt : Maybe Time.Posix
-    }
-
-
-type alias TopicId =
-    String
 
 
 type alias Votes =
@@ -109,6 +93,7 @@ type Msg
     | VotesReceived (Result Json.Decode.Error Votes)
     | SaveTopic User
     | DeleteTopic TopicId
+    | SortTopics
     | Upvote User Topic
     | RemoveUpvote User Topic
     | ErrorReceived (Result Json.Decode.Error Error)
@@ -117,6 +102,10 @@ type Msg
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
+    let
+        voteCountMap =
+            voteCountMapFromVotes model.votes
+    in
     case msg of
         UserReceived result ->
             case result of
@@ -129,7 +118,7 @@ update msg model =
         TopicsReceived result ->
             case result of
                 Ok topics ->
-                    ( { model | topics = Got (SortedList.from topics) }, Cmd.none )
+                    ( { model | topics = updateTopicList voteCountMap topics model.topics }, Cmd.none )
 
                 Err error ->
                     ( { model | error = Just (ParsingError (Json.Decode.errorToString error)) }, Cmd.none )
@@ -158,6 +147,9 @@ update msg model =
         DeleteTopic id ->
             ( model, deleteTopicCmd id )
 
+        SortTopics ->
+            ( { model | topics = Remote.map (TopicList.sort voteCountMap) model.topics }, Cmd.none )
+
         Upvote user topic ->
             ( model, submitVoteCmd user topic )
 
@@ -168,12 +160,38 @@ update msg model =
             ( { model | newTopicInput = value }, Cmd.none )
 
 
+voteCountMapFromVotes : Remote Votes -> VoteCountMap
+voteCountMapFromVotes remoteVotes topic =
+    case remoteVotes of
+        Loading ->
+            0
+
+        Got votes ->
+            Dict.get topic.id votes |> Maybe.withDefault [] |> List.length
+
+
+updateTopicList : VoteCountMap -> List Topic -> Remote TopicList -> Remote TopicList
+updateTopicList voteCountMap newTopics currentTopics =
+    (case currentTopics of
+        Loading ->
+            TopicList.from voteCountMap newTopics
+
+        Got sortedList ->
+            TopicList.update voteCountMap newTopics sortedList
+    )
+        |> Got
+
+
 
 ---- VIEW ----
 
 
 view : Model -> Html Msg
 view model =
+    let
+        voteCountMap =
+            voteCountMapFromVotes model.votes
+    in
     div
         [ css
             [ bodyFont
@@ -196,8 +214,19 @@ view model =
                     Nothing ->
                         []
                )
+            ++ (case model.topics of
+                    Got topics ->
+                        if not (TopicList.isSorted voteCountMap topics) then
+                            [ sortButton ]
+
+                        else
+                            []
+
+                    _ ->
+                        []
+               )
             ++ [ listing
-                    (topicList (Remote.map SortedList.current model.topics) model.user model.votes
+                    (topicList (Remote.map TopicList.toList model.topics) model.user model.votes
                         ++ [ div []
                                 {- We need an extra div, because the listing applies a margin
                                    to all its children which overrides our margin here.
@@ -226,6 +255,11 @@ stringFromError error =
 
         ParsingError errorMessage ->
             "There was an error with how the data looks like: " ++ errorMessage
+
+
+sortButton : Html Msg
+sortButton =
+    button [ css [ buttonStyle ], onClick SortTopics ] [ text "Sort" ]
 
 
 listing : List (Html Msg) -> Html Msg
