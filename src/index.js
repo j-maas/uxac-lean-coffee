@@ -26,6 +26,7 @@ const app = Elm.Main.init({
   node: document.getElementById("root"),
   flags: {
     timestampField: firebase.firestore.FieldValue.serverTimestamp(),
+    isAdmin: window.location.hash === "#admin"
   }
 });
 

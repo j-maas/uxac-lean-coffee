@@ -34,6 +34,7 @@ type alias Model =
     , votes : Remote Votes
     , newTopicInput : String
     , user : Remote User
+    , isAdmin : Bool
     , error : Maybe Error
 
     {- This allows us to specify that a server should add a timestamp
@@ -67,7 +68,9 @@ type alias TimestampField =
 
 
 type alias Flags =
-    { timestampField : TimestampField }
+    { timestampField : TimestampField
+    , isAdmin : Bool
+    }
 
 
 init : Flags -> ( Model, Cmd Msg )
@@ -76,6 +79,7 @@ init flags =
       , votes = Loading
       , newTopicInput = ""
       , user = Loading
+      , isAdmin = flags.isAdmin
       , error = Nothing
       , timestampField = flags.timestampField
       }
@@ -205,6 +209,15 @@ view model =
     let
         voteCountMap =
             voteCountMapFromVotes model.votes
+
+        heading =
+            "UXAC Lean Coffee"
+                ++ (if model.isAdmin then
+                        " (Admin)"
+
+                    else
+                        ""
+                   )
     in
     div
         [ css
@@ -213,7 +226,7 @@ view model =
             , Css.margin2 zero auto
             ]
         ]
-        ([ h1 [] [ text "UXAC Lean Coffee" ] ]
+        ([ h1 [] [ text heading ] ]
             ++ (case model.error of
                     Just error ->
                         [ div
@@ -258,7 +271,7 @@ view model =
                         ]
                     ]
                     ([ listing
-                        (topicList (Remote.map TopicList.toList model.topics) model.user model.votes)
+                        (topicList model)
                      ]
                         ++ [ div
                                 [ css [ Css.marginTop (rem 2) ]
@@ -322,21 +335,21 @@ listing contents =
         contents
 
 
-topicList : Remote (List Topic) -> Remote User -> Remote Votes -> List (Html Msg)
-topicList fetchedTopics currentUser votes =
-    case fetchedTopics of
+topicList : Model -> List (Html Msg)
+topicList model =
+    case model.topics of
         Loading ->
             [ text "Loading topics…" ]
 
         Got topics ->
-            List.map (topicCard currentUser votes) topics
+            List.map (topicCard model) (TopicList.toList topics)
 
 
-topicCard : Remote User -> Remote Votes -> Topic -> Html Msg
-topicCard currentUser fetchedVotes topic =
+topicCard : Model -> Topic -> Html Msg
+topicCard model topic =
     let
         maybeVoteButton =
-            case ( currentUser, fetchedVotes ) of
+            case ( model.user, model.votes ) of
                 ( Got user, Got votes ) ->
                     let
                         votesForThis =
@@ -385,12 +398,16 @@ topicCard currentUser fetchedVotes topic =
                     []
 
         mayModify =
-            case currentUser of
-                Loading ->
-                    False
+            if model.isAdmin then
+                True
 
-                Got user ->
-                    user.id == topic.userId
+            else
+                case model.user of
+                    Loading ->
+                        False
+
+                    Got user ->
+                        user.id == topic.userId
 
         maybeDeleteButton =
             if mayModify then
