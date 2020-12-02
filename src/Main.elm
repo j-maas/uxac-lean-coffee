@@ -250,17 +250,20 @@ view model =
                 in
                 [ div [ css [ visibility ] ] [ sortBar ] ]
                )
-            ++ [ listing
-                    (topicList (Remote.map TopicList.toList model.topics) model.user model.votes
-                        ++ [ div []
-                                {- We need an extra div, because the listing applies a margin
-                                   to all its children which overrides our margin here.
-                                -}
-                                [ div
-                                    [ css [ Css.marginTop (rem 2) ]
-                                    ]
-                                    [ card <| [ submitForm model.user model.newTopicInput ] ]
+            ++ [ div
+                    [ css
+                        [ Css.backgroundColor (Css.hsl primaryHue 0.2 0.95)
+                        , Css.padding2 (rem 1) (rem 1)
+                        , Css.borderRadius (rem 0.5)
+                        ]
+                    ]
+                    ([ listing
+                        (topicList (Remote.map TopicList.toList model.topics) model.user model.votes)
+                     ]
+                        ++ [ div
+                                [ css [ Css.marginTop (rem 2) ]
                                 ]
+                                [ card <| [ submitForm model.user model.newTopicInput ] ]
                            ]
                     )
                ]
@@ -301,21 +304,18 @@ sortButton =
 
 listing : List (Html Msg) -> Html Msg
 listing contents =
-    let
-        verticalMargin =
-            1
-    in
     div
         [ css
             [ Css.displayFlex
             , Css.flexDirection Css.column
-            , Css.backgroundColor (Css.hsl primaryHue 0.2 0.95)
-            , Css.padding2 zero (rem 1)
-            , Css.borderRadius (rem 0.5)
-            , Css.paddingTop (rem <| 1 - (verticalMargin / 2))
-            , Css.paddingBottom (rem <| 1 - (verticalMargin / 2))
             , Global.children
-                [ Global.everything [ Css.margin2 (rem <| verticalMargin / 2) zero ]
+                [ Global.everything
+                    [ Global.adjacentSiblings
+                        [ Global.everything
+                            [ Css.marginTop (rem 1)
+                            ]
+                        ]
+                    ]
                 ]
             ]
         ]
