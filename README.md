@@ -1,4 +1,5 @@
 # UXAC Lean Coffee
+[![test status](https://github.com/Y0hy0h/uxac-lean-coffee/workflows/Tests/badge.svg)](https://github.com/Y0hy0h/uxac-lean-coffee/actions?query=workflow%3ATests)
 
 ## Getting started
 1. `$ npm install`
