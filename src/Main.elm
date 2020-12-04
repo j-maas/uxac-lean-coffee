@@ -8,9 +8,10 @@ import Html as PlainHtml
 import Html.Styled as Html exposing (Html, button, div, form, h1, h2, input, label, p, text, textarea)
 import Html.Styled.Attributes exposing (css, placeholder, src, type_, value)
 import Html.Styled.Events exposing (onClick, onInput, onSubmit)
-import Json.Decode
+import Json.Decode as Decode exposing (Decoder)
 import Json.Decode.Pipeline
-import Json.Encode
+import Json.Encode as Encode
+import List.Extra as List
 import Remote exposing (Remote(..))
 import Time
 import TopicList exposing (Topic, TopicId, TopicList, VoteCountMap)
@@ -30,7 +31,8 @@ main =
 
 
 type alias Model =
-    { topics : Remote TopicList
+    { discussed : Maybe TopicId
+    , topics : Remote TopicList
     , votes : Remote Votes
     , newTopicInput : String
     , user : Remote User
@@ -49,6 +51,15 @@ type alias Votes =
     Dict TopicId (List UserId)
 
 
+type alias Vote =
+    { userId : UserId, topicId : TopicId }
+
+
+voteFrom : User -> Topic -> Vote
+voteFrom user topic =
+    { userId = user.id, topicId = topic.id }
+
+
 type alias User =
     { id : UserId
     }
@@ -64,7 +75,7 @@ type Error
 
 
 type alias TimestampField =
-    Json.Decode.Value
+    Decode.Value
 
 
 type alias Flags =
@@ -75,7 +86,8 @@ type alias Flags =
 
 init : Flags -> ( Model, Cmd Msg )
 init flags =
-    ( { topics = Loading
+    ( { discussed = Nothing
+      , topics = Loading
       , votes = Loading
       , newTopicInput = ""
       , user = Loading
@@ -83,7 +95,7 @@ init flags =
       , error = Nothing
       , timestampField = flags.timestampField
       }
-    , Cmd.none
+    , firestoreSubscriptionsCmd
     )
 
 
@@ -92,15 +104,18 @@ init flags =
 
 
 type Msg
-    = UserReceived (Result Json.Decode.Error User)
-    | TopicsReceived (Result Json.Decode.Error (List Topic))
-    | VotesReceived (Result Json.Decode.Error Votes)
+    = UserReceived (Result Decode.Error User)
+    | DecodeError Decode.Error
+    | TopicsReceived (List Topic)
+    | VotesReceived Votes
+    | DiscussedTopicReceived (Maybe TopicId)
     | SaveTopic User
     | DeleteTopic TopicId
+    | Discuss TopicId
     | SortTopics
     | Upvote User Topic
     | RemoveUpvote User Topic
-    | ErrorReceived (Result Json.Decode.Error Error)
+    | ErrorReceived (Result Decode.Error Error)
     | NewTopicInputChanged String
 
 
@@ -117,40 +132,36 @@ update msg model =
                     ( { model | user = Got user }, Cmd.none )
 
                 Err error ->
-                    ( { model | error = Just (ParsingError (Json.Decode.errorToString error)) }, Cmd.none )
+                    ( { model | error = Just (ParsingError (Decode.errorToString error)) }, Cmd.none )
 
-        TopicsReceived result ->
-            case result of
-                Ok topics ->
-                    ( { model | topics = updateTopicList voteCountMap topics model.topics }, Cmd.none )
+        DecodeError error ->
+            ( { model | error = Just <| ParsingError (Decode.errorToString error) }, Cmd.none )
 
-                Err error ->
-                    ( { model | error = Just (ParsingError (Json.Decode.errorToString error)) }, Cmd.none )
+        TopicsReceived topics ->
+            ( { model | topics = updateTopicList voteCountMap topics model.topics }, Cmd.none )
 
-        VotesReceived result ->
-            case result of
-                Ok votes ->
-                    let
-                        newModel =
-                            case model.votes of
-                                Loading ->
-                                    { model
-                                        | votes = Got votes
+        VotesReceived votes ->
+            let
+                newModel =
+                    case model.votes of
+                        Loading ->
+                            { model
+                                | votes = Got votes
 
-                                        -- If the votes are coming in for the first time, immediately sort the topics.
-                                        , topics =
-                                            Remote.map
-                                                (TopicList.sort <| voteCountMapFromVotes <| Got votes)
-                                                model.topics
-                                    }
+                                -- If the votes are coming in for the first time, immediately sort the topics.
+                                , topics =
+                                    Remote.map
+                                        (TopicList.sort <| voteCountMapFromVotes <| Got votes)
+                                        model.topics
+                            }
 
-                                Got _ ->
-                                    { model | votes = Got votes }
-                    in
-                    ( newModel, Cmd.none )
+                        Got _ ->
+                            { model | votes = Got votes }
+            in
+            ( newModel, Cmd.none )
 
-                Err error ->
-                    ( { model | error = Just (ParsingError (Json.Decode.errorToString error)) }, Cmd.none )
+        DiscussedTopicReceived topic ->
+            ( { model | discussed = topic }, Cmd.none )
 
         ErrorReceived result ->
             case result of
@@ -158,24 +169,27 @@ update msg model =
                     ( { model | error = Just value }, Cmd.none )
 
                 Err error ->
-                    ( { model | error = Just (ParsingError (Json.Decode.errorToString error)) }, Cmd.none )
+                    ( { model | error = Just (ParsingError (Decode.errorToString error)) }, Cmd.none )
 
         SaveTopic user ->
             ( { model | newTopicInput = "" }
-            , submitTopicCmd model.timestampField { topic = model.newTopicInput, userId = user.id }
+            , submitTopic model.timestampField { topic = model.newTopicInput, userId = user.id }
             )
 
         DeleteTopic id ->
-            ( model, deleteTopicCmd id )
+            ( model, deleteTopic id model.votes )
+
+        Discuss topicId ->
+            ( model, submitDiscussedTopic topicId )
 
         SortTopics ->
             ( { model | topics = Remote.map (TopicList.sort voteCountMap) model.topics }, Cmd.none )
 
         Upvote user topic ->
-            ( model, submitVoteCmd user topic )
+            ( model, submitVote (voteFrom user topic) )
 
         RemoveUpvote user topic ->
-            ( model, retractVoteCmd user topic )
+            ( model, retractVote (voteFrom user topic) )
 
         NewTopicInputChanged value ->
             ( { model | newTopicInput = value }, Cmd.none )
@@ -195,12 +209,70 @@ updateTopicList : VoteCountMap -> List Topic -> Remote TopicList -> Remote Topic
 updateTopicList voteCountMap newTopics currentTopics =
     (case currentTopics of
         Loading ->
-            TopicList.from voteCountMap newTopics
+            TopicList.from newTopics
+                |> TopicList.sort voteCountMap
 
         Got sortedList ->
             TopicList.update voteCountMap newTopics sortedList
     )
         |> Got
+
+
+submitTopic : TimestampField -> TopicSubmission -> Cmd msg
+submitTopic timestampField submission =
+    insertDoc
+        { collectionPath = topicCollectionPath
+        , data =
+            topicEncoder
+                submission
+                timestampField
+        }
+
+
+deleteTopic : TopicId -> Remote Votes -> Cmd msg
+deleteTopic topicId votes =
+    let
+        topicPath =
+            topicCollectionPath ++ [ topicId ]
+
+        {- We delete all associated votes as well.
+           TODO: This smells like there might be a race condition when others add votes when we delete them. Investigate whether we can delete the associated votes on the server side through functions.
+        -}
+        votePaths =
+            Remote.toMaybe votes
+                |> Maybe.withDefault Dict.empty
+                |> Dict.get topicId
+                |> Maybe.withDefault []
+                |> List.map (\userId -> votePath { userId = userId, topicId = topicId })
+    in
+    deleteDocs (topicPath :: votePaths)
+
+
+submitVote : Vote -> Cmd msg
+submitVote vote =
+    setDoc
+        { docPath = votePath vote
+        , data =
+            voteEncoder vote
+        }
+
+
+votePath : Vote -> Path
+votePath ids =
+    voteCollectionPath ++ [ ids.userId ++ ":" ++ ids.topicId ]
+
+
+retractVote : Vote -> Cmd msg
+retractVote vote =
+    deleteDocs [ votePath vote ]
+
+
+submitDiscussedTopic : TopicId -> Cmd msg
+submitDiscussedTopic topicId =
+    setDoc
+        { docPath = discussedDocPath
+        , data = discussedTopicEncoder topicId
+        }
 
 
 
@@ -221,6 +293,9 @@ view model =
                     else
                         ""
                    )
+
+        ( discussedTopic, topicList ) =
+            processTopics model
     in
     div
         [ css
@@ -230,58 +305,146 @@ view model =
             ]
         ]
         ([ h1 [] [ text heading ] ]
-            ++ (case model.error of
-                    Just error ->
-                        [ div
-                            [ css
-                                [ Css.border3 (px 1) Css.solid (Css.hsl 0 0.8 0.75)
-                                , Css.padding (rem 1)
-                                ]
-                            ]
-                            [ text <| stringFromError error ]
-                        ]
+            ++ errorView model.error
+            ++ discussionView model discussedTopic
+            ++ sortBarView model
+            ++ [ topicListContainer model topicList model.newTopicInput
+               ]
+        )
 
-                    Nothing ->
-                        []
-               )
-            ++ (let
-                    showButton =
-                        case model.topics of
-                            Got topics ->
-                                if not (TopicList.isSorted voteCountMap topics) then
-                                    True
 
-                                else
-                                    False
+type alias TopicWithVotes =
+    { topic : Topic
+    , votes : List UserId
+    }
 
-                            _ ->
-                                False
 
-                    visibility =
-                        if showButton then
-                            Css.visibility Css.visible
+processTopics :
+    { a
+        | discussed : Maybe TopicId
+        , topics : Remote TopicList
+        , votes : Remote Votes
+    }
+    -> ( Maybe TopicWithVotes, Remote (List TopicWithVotes) )
+processTopics model =
+    case model.topics of
+        Loading ->
+            ( Nothing, Loading )
 
-                        else
-                            Css.visibility Css.hidden
-                in
-                [ div [ css [ visibility ] ] [ sortBar ] ]
-               )
-            ++ [ div
-                    [ css
-                        [ Css.backgroundColor (Css.hsl primaryHue 0.2 0.95)
-                        , Css.padding2 (rem 1) (rem 1)
-                        , Css.borderRadius (rem 0.5)
-                        ]
-                    ]
-                    ([ listing
-                        (topicList model)
-                     ]
-                        ++ [ div
-                                [ css [ Css.marginTop (rem 2) ]
-                                ]
-                                [ card <| [ submitForm model.user model.newTopicInput ] ]
-                           ]
+        Got topics ->
+            let
+                topicsInVoting =
+                    Maybe.map
+                        (\votes ->
+                            TopicList.toList topics
+                                |> List.map
+                                    (\topic ->
+                                        { topic = topic
+                                        , votes =
+                                            Dict.get topic.id votes
+                                                |> Maybe.withDefault []
+                                        }
+                                    )
+                        )
+                        (Remote.toMaybe model.votes)
+                        |> Maybe.withDefault []
+            in
+            model.discussed
+                |> Maybe.map
+                    (\topicId ->
+                        extract (\entry -> entry.topic.id == topicId) topicsInVoting
+                            |> Tuple.mapSecond Got
                     )
+                |> Maybe.withDefault ( Nothing, Got topicsInVoting )
+
+
+extract : (a -> Bool) -> List a -> ( Maybe a, List a )
+extract predicate list =
+    List.partition predicate list
+        |> Tuple.mapFirst List.head
+
+
+errorView : Maybe Error -> List (Html Msg)
+errorView maybeError =
+    case maybeError of
+        Just error ->
+            [ div
+                [ css
+                    [ Css.border3 (px 1) Css.solid (Css.hsl 0 0.8 0.75)
+                    , Css.padding (rem 1)
+                    ]
+                ]
+                [ text <| stringFromError error ]
+            ]
+
+        Nothing ->
+            []
+
+
+discussionView : TopicViewModel a -> Maybe TopicWithVotes -> List (Html Msg)
+discussionView model maybeDiscussedTopic =
+    case maybeDiscussedTopic of
+        Just topic ->
+            [ div
+                [ css
+                    [ Css.borderRadius (rem 0.5)
+                    , Css.padding (rem 1)
+                    , Css.backgroundColor (Css.hsl primaryHue 1 0.5)
+                    ]
+                ]
+                [ h2 [ css [ Css.margin zero, Css.marginBottom (rem 1) ] ] [ text "In discussion" ]
+                , topicCard model topic
+                ]
+            ]
+
+        Nothing ->
+            []
+
+
+sortBarView : Model -> List (Html Msg)
+sortBarView model =
+    let
+        voteCountMap =
+            voteCountMapFromVotes model.votes
+
+        showButton =
+            case model.topics of
+                Got topics ->
+                    if not (TopicList.isSorted voteCountMap topics) then
+                        True
+
+                    else
+                        False
+
+                _ ->
+                    False
+
+        visibility =
+            if showButton then
+                Css.visibility Css.visible
+
+            else
+                Css.visibility Css.hidden
+    in
+    [ div [ css [ visibility ] ] [ sortBar ] ]
+
+
+topicListContainer : TopicViewModel a -> Remote (List TopicWithVotes) -> String -> Html Msg
+topicListContainer model topics newTopicInput =
+    div
+        [ css
+            [ Css.backgroundColor (Css.hsl primaryHue 0.2 0.95)
+            , Css.padding2 (rem 1) (rem 1)
+            , Css.borderRadius (rem 0.5)
+            ]
+        ]
+        ([ listing
+            (topicListView model topics)
+         ]
+            ++ [ div
+                    [ css [ Css.marginTop (rem 2) ]
+                    ]
+                    [ card <| [ submitForm model.user newTopicInput ] ]
                ]
         )
 
@@ -338,33 +501,33 @@ listing contents =
         contents
 
 
-topicList : Model -> List (Html Msg)
-topicList model =
-    case model.topics of
+topicListView : TopicViewModel a -> Remote (List TopicWithVotes) -> List (Html Msg)
+topicListView model remoteTopics =
+    case remoteTopics of
         Loading ->
             [ text "Loading topics…" ]
 
         Got topics ->
-            List.map (topicCard model) (TopicList.toList topics)
+            List.map (topicCard model) topics
 
 
-topicCard : Model -> Topic -> Html Msg
-topicCard model topic =
+type alias TopicViewModel a =
+    { a | user : Remote User, isAdmin : Bool }
+
+
+topicCard : TopicViewModel a -> TopicWithVotes -> Html Msg
+topicCard model topicEntry =
     let
         maybeVoteButton =
-            case ( model.user, model.votes ) of
-                ( Got user, Got votes ) ->
+            case model.user of
+                Got user ->
                     let
-                        votesForThis =
-                            Dict.get topic.id votes
-                                |> Maybe.withDefault []
-
                         voteCount =
-                            votesForThis
+                            topicEntry.votes
                                 |> List.length
 
                         userAlreadyVoted =
-                            List.any (\userId -> userId == user.id) votesForThis
+                            List.any (\userId -> userId == user.id) topicEntry.votes
 
                         state =
                             if userAlreadyVoted then
@@ -384,7 +547,7 @@ topicCard model topic =
                                 }
                     in
                     [ button
-                        [ onClick (state.action user topic)
+                        [ onClick (state.action user topicEntry.topic)
                         , css
                             [ buttonStyle
                             , Css.backgroundColor (Css.hsl primaryHue state.saturation state.lightness)
@@ -410,12 +573,19 @@ topicCard model topic =
                         False
 
                     Got user ->
-                        user.id == topic.userId
+                        user.id == topicEntry.topic.userId
+
+        maybeDiscussButton =
+            if model.isAdmin then
+                [ button [ onClick (Discuss topicEntry.topic.id), css [ buttonStyle ] ] [ text "Discuss" ] ]
+
+            else
+                []
 
         maybeDeleteButton =
             if mayModify then
                 [ button
-                    [ onClick (DeleteTopic topic.id)
+                    [ onClick (DeleteTopic topicEntry.topic.id)
                     , css [ buttonStyle ]
                     ]
                     [ text "Delete" ]
@@ -426,7 +596,7 @@ topicCard model topic =
     in
     card
         [ div [ css [ Css.displayFlex, Css.flexDirection Css.column ] ]
-            [ text topic.topic
+            [ text topicEntry.topic.topic
             , div
                 [ css
                     [ Css.marginTop (rem 1)
@@ -436,6 +606,7 @@ topicCard model topic =
                     ]
                 ]
                 (maybeVoteButton
+                    ++ maybeDiscussButton
                     ++ maybeDeleteButton
                 )
             ]
@@ -509,74 +680,256 @@ primaryHue =
 subscriptions : Model -> Sub Msg
 subscriptions model =
     Sub.batch
-        [ receiveUser (Json.Decode.decodeValue userDecoder >> UserReceived)
-        , receiveTopics (Json.Decode.decodeValue topicsDecoder >> TopicsReceived)
-        , receiveVotes (Json.Decode.decodeValue votesDecoder >> VotesReceived)
-        , errorReceived (Json.Decode.decodeValue errorDecoder >> ErrorReceived)
+        [ receiveFirestoreSubscriptions
+        , receiveUser_ (Decode.decodeValue userDecoder >> UserReceived)
+        , receiveError_ (Decode.decodeValue errorDecoder >> ErrorReceived)
         ]
 
 
-type alias TopicSubmission =
-    { topic : String, userId : String }
+
+--- PORTS
 
 
-submitTopicCmd : TimestampField -> TopicSubmission -> Cmd msg
-submitTopicCmd timestampField submission =
-    topicEncoder submission timestampField
-        |> submitTopic
+topicCollectionPath : Path
+topicCollectionPath =
+    [ "topics" ]
 
 
-deleteTopicCmd : String -> Cmd msg
-deleteTopicCmd topicId =
-    deleteTopic topicId
+voteCollectionPath : Path
+voteCollectionPath =
+    [ "votes" ]
 
 
-submitVoteCmd : User -> Topic -> Cmd msg
-submitVoteCmd user topic =
-    voteEncoder user topic
-        |> submitVote
+discussedDocPath : Path
+discussedDocPath =
+    [ "discussion", "discussed" ]
 
 
-retractVoteCmd : User -> Topic -> Cmd msg
-retractVoteCmd user topic =
-    voteEncoder user topic
-        |> retractVote
+firestoreSubscriptionsCmd : Cmd Msg
+firestoreSubscriptionsCmd =
+    Cmd.batch
+        [ subscribe { kind = Collection, path = topicCollectionPath, tag = TopicsTag }
+        , subscribe { kind = Collection, path = voteCollectionPath, tag = VotesTag }
+        , subscribe { kind = Doc, path = discussedDocPath, tag = DiscussedTag }
+        ]
 
 
-port receiveUser : (Json.Encode.Value -> msg) -> Sub msg
+subscribe : SubscriptionInfo -> Cmd msg
+subscribe info =
+    encodeSubscriptionInfo info
+        |> subscribe_
 
 
-port receiveTopics : (Json.Encode.Value -> msg) -> Sub msg
+port subscribe_ : Encode.Value -> Cmd msg
 
 
-port receiveVotes : (Json.Encode.Value -> msg) -> Sub msg
+type alias SubscriptionInfo =
+    { kind : SubscriptionKind
+    , path : Path
+    , tag : SubscriptionTag
+    }
 
 
-port errorReceived : (Json.Encode.Value -> msg) -> Sub msg
+encodeSubscriptionInfo : SubscriptionInfo -> Encode.Value
+encodeSubscriptionInfo info =
+    Encode.object
+        [ ( "kind", encodeSubscriptionKind info.kind )
+        , ( "path", encodePath info.path )
+        , ( "tag", encodeSubscriptionTag info.tag )
+        ]
 
 
-port submitTopic : Json.Encode.Value -> Cmd msg
+type SubscriptionKind
+    = Collection
+    | Doc
 
 
-port deleteTopic : String -> Cmd msg
+encodeSubscriptionKind : SubscriptionKind -> Encode.Value
+encodeSubscriptionKind kind =
+    let
+        raw =
+            case kind of
+                Collection ->
+                    "collection"
+
+                Doc ->
+                    "doc"
+    in
+    Encode.string raw
 
 
-port submitVote : Json.Encode.Value -> Cmd msg
+subscriptionKindDecoder : Decoder SubscriptionKind
+subscriptionKindDecoder =
+    Decode.string
+        |> Decode.andThen
+            (\raw ->
+                case raw of
+                    "collection" ->
+                        Decode.succeed Collection
+
+                    "doc" ->
+                        Decode.succeed Doc
+
+                    _ ->
+                        Decode.fail "Invalid subscription kind"
+            )
 
 
-port retractVote : Json.Encode.Value -> Cmd msg
+type alias Path =
+    List String
 
 
-userDecoder : Json.Decode.Decoder User
-userDecoder =
-    Json.Decode.field "id" Json.Decode.string
-        |> Json.Decode.map (\id -> { id = id })
+encodePath : Path -> Encode.Value
+encodePath path =
+    String.join "/" path
+        |> Encode.string
 
 
-topicsDecoder : Json.Decode.Decoder (List Topic)
+type SubscriptionTag
+    = TopicsTag
+    | VotesTag
+    | DiscussedTag
+
+
+encodeSubscriptionTag : SubscriptionTag -> Encode.Value
+encodeSubscriptionTag tag =
+    let
+        raw =
+            case tag of
+                TopicsTag ->
+                    "topics"
+
+                VotesTag ->
+                    "votes"
+
+                DiscussedTag ->
+                    "discussed"
+    in
+    Encode.string raw
+
+
+subscriptionTagDecoder : Decoder SubscriptionTag
+subscriptionTagDecoder =
+    Decode.string
+        |> Decode.andThen
+            (\raw ->
+                case raw of
+                    "topics" ->
+                        Decode.succeed TopicsTag
+
+                    "votes" ->
+                        Decode.succeed VotesTag
+
+                    "discussed" ->
+                        Decode.succeed DiscussedTag
+
+                    _ ->
+                        Decode.fail "Invalid subscription kind"
+            )
+
+
+receiveFirestoreSubscriptions : Sub Msg
+receiveFirestoreSubscriptions =
+    receive_ parseFirestoreSubscription
+
+
+port receive_ : (Encode.Value -> msg) -> Sub msg
+
+
+parseFirestoreSubscription : Encode.Value -> Msg
+parseFirestoreSubscription value =
+    let
+        decoded =
+            Decode.decodeValue
+                (Decode.field "tag" subscriptionTagDecoder
+                    |> Decode.andThen
+                        (\tag ->
+                            let
+                                dataDecoder : Decoder Msg
+                                dataDecoder =
+                                    case tag of
+                                        TopicsTag ->
+                                            topicsDecoder
+                                                |> Decode.map TopicsReceived
+
+                                        VotesTag ->
+                                            votesDecoder
+                                                |> Decode.map VotesReceived
+
+                                        DiscussedTag ->
+                                            discussedTopicDecoder
+                                                |> Decode.map DiscussedTopicReceived
+                            in
+                            Decode.field "data" dataDecoder
+                        )
+                )
+                value
+    in
+    case decoded of
+        Ok msg ->
+            msg
+
+        Err error ->
+            DecodeError error
+
+
+type alias InsertDocInfo =
+    { collectionPath : Path, data : Encode.Value }
+
+
+insertDoc : InsertDocInfo -> Cmd msg
+insertDoc info =
+    Encode.object
+        [ ( "path", encodePath info.collectionPath )
+        , ( "data", info.data )
+        ]
+        |> insertDoc_
+
+
+port insertDoc_ : Encode.Value -> Cmd msg
+
+
+type alias SetDocInfo =
+    { docPath : Path, data : Encode.Value }
+
+
+setDoc : SetDocInfo -> Cmd msg
+setDoc info =
+    Encode.object
+        [ ( "path", encodePath info.docPath )
+        , ( "data", info.data )
+        ]
+        |> setDoc_
+
+
+port setDoc_ : Encode.Value -> Cmd msg
+
+
+deleteDocs : List Path -> Cmd msg
+deleteDocs paths =
+    Encode.object
+        [ ( "paths", Encode.list encodePath paths )
+        ]
+        |> deleteDocs_
+
+
+port deleteDocs_ : Encode.Value -> Cmd msg
+
+
+port receiveUser_ : (Encode.Value -> msg) -> Sub msg
+
+
+port receiveError_ : (Encode.Value -> msg) -> Sub msg
+
+
+
+-- DECODERS
+
+
+topicsDecoder : Decoder (List Topic)
 topicsDecoder =
-    Json.Decode.list
-        (Json.Decode.map4
+    Decode.list
+        (Decode.map4
             (\id topic userId createdAt ->
                 { id = id
                 , topic = topic
@@ -584,16 +937,31 @@ topicsDecoder =
                 , createdAt = createdAt
                 }
             )
-            (Json.Decode.field "id" Json.Decode.string)
-            (Json.Decode.field "topic" Json.Decode.string)
-            (Json.Decode.field "userId" Json.Decode.string)
-            (Json.Decode.field "createdAt" (Json.Decode.nullable timestampDecoder))
+            (Decode.field "id" Decode.string)
+            (dataField "topic" Decode.string)
+            (dataField "userId" Decode.string)
+            (dataField "createdAt" (Decode.nullable timestampDecoder))
         )
 
 
-timestampDecoder : Json.Decode.Decoder Time.Posix
+dataField : String -> Decoder a -> Decoder a
+dataField field decoder =
+    Decode.field "data" (Decode.field field decoder)
+
+
+
+-- old ports
+
+
+userDecoder : Decoder User
+userDecoder =
+    Decode.field "id" Decode.string
+        |> Decode.map (\id -> { id = id })
+
+
+timestampDecoder : Decoder Time.Posix
 timestampDecoder =
-    Json.Decode.map2
+    Decode.map2
         (\seconds nanoseconds ->
             let
                 {- The nanoseconds count the fractions of seconds.
@@ -605,21 +973,21 @@ timestampDecoder =
             in
             Time.millisToPosix (round milliseconds)
         )
-        (Json.Decode.field "seconds" Json.Decode.int)
-        (Json.Decode.field "nanoseconds" Json.Decode.int)
+        (Decode.field "seconds" Decode.int)
+        (Decode.field "nanoseconds" Decode.int)
 
 
-votesDecoder : Json.Decode.Decoder Votes
+votesDecoder : Decoder Votes
 votesDecoder =
-    Json.Decode.list
-        (Json.Decode.map2
+    Decode.list
+        (Decode.map2
             (\topicId userId ->
                 ( topicId, userId )
             )
-            (Json.Decode.field "topicId" Json.Decode.string)
-            (Json.Decode.field "userId" Json.Decode.string)
+            (dataField "topicId" Decode.string)
+            (dataField "userId" Decode.string)
         )
-        |> Json.Decode.map
+        |> Decode.map
             (List.foldl
                 (\( topicId, userId ) dict ->
                     Dict.update topicId
@@ -637,28 +1005,44 @@ votesDecoder =
             )
 
 
-errorDecoder : Json.Decode.Decoder Error
+discussedTopicDecoder : Decoder (Maybe TopicId)
+discussedTopicDecoder =
+    Decode.maybe (Decode.field "topicId" Decode.string)
+
+
+errorDecoder : Decoder Error
 errorDecoder =
-    Json.Decode.map2
+    Decode.map2
         (\code errorMessage ->
             FirestoreError { code = code, errorMessage = errorMessage }
         )
-        (Json.Decode.field "code" Json.Decode.string)
-        (Json.Decode.field "message" Json.Decode.string)
+        (Decode.field "code" Decode.string)
+        (Decode.field "message" Decode.string)
 
 
-topicEncoder : TopicSubmission -> TimestampField -> Json.Encode.Value
+type alias TopicSubmission =
+    { topic : String, userId : String }
+
+
+topicEncoder : TopicSubmission -> TimestampField -> Encode.Value
 topicEncoder { topic, userId } timestampField =
-    Json.Encode.object
-        [ ( "topic", Json.Encode.string topic )
-        , ( "userId", Json.Encode.string userId )
+    Encode.object
+        [ ( "topic", Encode.string topic )
+        , ( "userId", Encode.string userId )
         , ( "createdAt", timestampField )
         ]
 
 
-voteEncoder : User -> Topic -> Json.Encode.Value
-voteEncoder user topic =
-    Json.Encode.object
-        [ ( "userId", Json.Encode.string user.id )
-        , ( "topicId", Json.Encode.string topic.id )
+voteEncoder : Vote -> Encode.Value
+voteEncoder vote =
+    Encode.object
+        [ ( "userId", Encode.string vote.userId )
+        , ( "topicId", Encode.string vote.topicId )
+        ]
+
+
+discussedTopicEncoder : TopicId -> Encode.Value
+discussedTopicEncoder topicId =
+    Encode.object
+        [ ( "topicId", Encode.string topicId )
         ]

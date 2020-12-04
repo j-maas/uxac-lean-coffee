@@ -13,13 +13,9 @@ type alias Id a comparable =
     a -> comparable
 
 
-from : Ordering a -> List a -> SortedList a
-from ord list =
-    let
-        sortedList =
-            List.sortWith ord list
-    in
-    SortedList sortedList
+from : List a -> SortedList a
+from list =
+    SortedList list
 
 
 update : Ordering a -> Id a comparable -> List a -> SortedList a -> SortedList a

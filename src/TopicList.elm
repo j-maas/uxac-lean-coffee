@@ -24,9 +24,9 @@ type alias VoteCountMap =
     Topic -> Int
 
 
-from : VoteCountMap -> List Topic -> TopicList
-from voteMap topics =
-    SortedList.from (orderTopics voteMap) topics
+from : List Topic -> TopicList
+from topics =
+    SortedList.from topics
 
 
 update : VoteCountMap -> List Topic -> TopicList -> TopicList
