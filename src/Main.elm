@@ -1,8 +1,9 @@
 port module Main exposing (Model, Msg(..), init, main, update, view)
 
 import Browser
-import Css exposing (auto, pct, px, rem, zero)
+import Css exposing (auto, num, pct, px, rem, zero)
 import Css.Global as Global
+import Css.Media as Media
 import Dict exposing (Dict)
 import Html as PlainHtml
 import Html.Styled as Html exposing (Html, button, div, form, h1, h2, input, label, li, ol, p, text, textarea)
@@ -311,7 +312,7 @@ view model =
             ]
             ([ h1 [] [ text heading ] ]
                 ++ errorView model.error
-                ++ discussionView model discussedTopic
+                ++ [ discussionView model discussedTopic ]
                 ++ [ div [ css [ Css.marginTop (rem 1) ] ] [ topicEntry model.user model.newTopicInput ] ]
             )
         , topicsToVote model topicList (sortBarView model.votes model.topics)
@@ -322,8 +323,8 @@ limitWidth : Css.Style
 limitWidth =
     Css.batch
         [ Css.maxWidth (rem 32)
-        , Css.marginLeft Css.auto
-        , Css.marginRight Css.auto
+        , Css.marginLeft auto
+        , Css.marginRight auto
         ]
 
 
@@ -395,38 +396,61 @@ errorView maybeError =
             []
 
 
-discussionView : TopicViewModel a -> Maybe TopicWithVotes -> List (Html Msg)
+discussionView : TopicViewModel a -> Maybe TopicWithVotes -> Html Msg
 discussionView model maybeDiscussedTopic =
-    case maybeDiscussedTopic of
-        Just topic ->
-            [ div
-                [ css
-                    [ Css.borderRadius (rem 0.5)
-                    , Css.padding (rem 1)
-                    , Css.backgroundColor (Css.hsl primaryHue 1 0.5)
-                    ]
-                ]
-                [ h2 [ css [ Css.margin zero, Css.marginBottom (rem 1) ] ] [ text "In discussion" ]
-                , topicCard model topic
-                ]
+    div
+        [ css
+            [ borderRadius
+            , Css.padding (rem 1)
+            , Css.backgroundColor (Css.hsl primaryHue 1 0.5)
             ]
+        ]
+        ([ h2 [ css [ Css.margin zero, Css.marginBottom (rem 1) ] ] [ text "In discussion" ]
+         ]
+            ++ (case maybeDiscussedTopic of
+                    Just topic ->
+                        [ topicCard model topic
+                        ]
 
-        Nothing ->
-            []
+                    Nothing ->
+                        [ div
+                            [ css [ Css.opacity (num 0.5) ]
+                            ]
+                            [ card
+                                [ div [ css [ Css.width (pct 100), Css.height (rem 5) ] ]
+                                    [ text "Currently there is no topic in discussion. Vote for one below."
+                                    ]
+                                ]
+                            ]
+                        ]
+               )
+        )
+
+
+backgroundColor : Css.Style
+backgroundColor =
+    Css.backgroundColor (Css.hsl primaryHue 0.2 0.95)
 
 
 topicEntry : Remote User -> String -> Html Msg
 topicEntry user newTopicInput =
-    card [ submitForm user newTopicInput ]
+    div
+        [ css
+            [ containerPadding
+            , borderRadius
+            , backgroundColor
+            ]
+        ]
+        [ submitForm user newTopicInput ]
 
 
 topicsToVote : TopicViewModel a -> Remote (List TopicWithVotes) -> Html Msg -> Html Msg
 topicsToVote model remoteTopics toolbar =
     div
         [ css
-            [ Css.backgroundColor (Css.hsl primaryHue 0.2 0.95)
+            [ backgroundColor
             , containerPadding
-            , Css.borderRadius (rem 0.5)
+            , borderRadius
             ]
         ]
         (case remoteTopics of
@@ -452,16 +476,37 @@ topicsToVote model remoteTopics toolbar =
                         [ text "All topics" ]
                     , toolbar
                     ]
-                , ol
+                , let
+                    breakpoint =
+                        rem 40
+                  in
+                  ol
                     [ css
-                        [ Css.property "display" "grid"
-
-                        -- TODO: Consider allowing smaller widths on narrow devices via media queries.
-                        , Css.property "grid-template-columns" "repeat(auto-fill, minmax(20rem, 1fr))"
-                        , Css.property "row-gap" "2rem"
-                        , Css.property "column-gap" "1rem"
-                        , Css.padding zero
+                        [ Css.padding zero
                         , Css.margin zero
+                        , Css.displayFlex
+                        , Css.flexDirection Css.column
+                        , Media.withMedia [ Media.all [ Media.maxWidth breakpoint ] ]
+                            [ Global.children
+                                [ Global.everything
+                                    [ Global.adjacentSiblings
+                                        [ Global.everything
+                                            [ Css.marginTop (rem 1)
+                                            ]
+                                        ]
+                                    ]
+                                ]
+                            ]
+                        , Media.withMedia [ Media.all [ Media.minWidth breakpoint ] ]
+                            [ Css.property
+                                "display"
+                                "grid"
+
+                            -- TODO: Consider allowing smaller widths on narrow devices via media queries.
+                            , Css.property "grid-template-columns" "repeat(auto-fill, minmax(20rem, 1fr))"
+                            , Css.property "row-gap" "2rem"
+                            , Css.property "column-gap" "1rem"
+                            ]
                         ]
                     ]
                     (List.map
@@ -475,6 +520,11 @@ topicsToVote model remoteTopics toolbar =
                     )
                 ]
         )
+
+
+borderRadius : Css.Style
+borderRadius =
+    Css.borderRadius (rem 0.5)
 
 
 containerPadding : Css.Style
@@ -624,13 +674,19 @@ topicCard model entry =
                 []
     in
     card
-        [ div [ css [ Css.displayFlex, Css.flexDirection Css.column ] ]
+        [ div
+            [ css
+                [ Css.displayFlex
+                , Css.flexDirection Css.column
+                ]
+            ]
             [ text entry.topic.topic
             , div
                 [ css
                     [ Css.marginTop (rem 1)
                     , Css.displayFlex
                     , Css.flexDirection Css.row
+                    , Css.flexWrap Css.wrap
                     , Css.justifyContent Css.spaceBetween
                     ]
                 ]
@@ -646,7 +702,7 @@ submitForm : Remote User -> String -> Html Msg
 submitForm fetchedUser currentInput =
     case fetchedUser of
         Loading ->
-            text "Logging you in…"
+            text "Connecting…"
 
         Got user ->
             newTopic user currentInput
@@ -659,7 +715,7 @@ newTopic user currentInput =
         , onSubmit (SaveTopic user)
         ]
         [ label [ css [ Css.displayFlex, Css.flexDirection Css.column, Css.width (pct 100) ] ]
-            [ text "Your topic"
+            [ text "Add a topic"
             , input
                 [ value currentInput
                 , onInput NewTopicInputChanged
@@ -676,7 +732,7 @@ card content =
     div
         [ css
             [ Css.padding (rem 1)
-            , Css.borderRadius (rem 0.5)
+            , borderRadius
             , Css.boxShadow4 zero (rem 0.1) (rem 0.3) (Css.hsla 0 0 0 0.25)
             , Css.backgroundColor (Css.hsl 0 0 1)
             ]
