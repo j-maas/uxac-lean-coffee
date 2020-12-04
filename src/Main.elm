@@ -719,12 +719,23 @@ newTopic user currentInput =
             , input
                 [ value currentInput
                 , onInput NewTopicInputChanged
-                , css [ Css.padding2 (rem 0.5) (rem 0.5) ]
+                , css
+                    [ Css.padding2 (rem 0.5) (rem 0.5)
+                    , Css.marginTop (rem 0.3)
+                    , smallBorderRadius
+                    , Css.border3 (px 1) Css.solid (Css.hsl 0 0 0)
+                    , Css.boxShadow5 Css.inset (rem 0.1) (rem 0.1) (rem 0.1) (Css.hsla 0 0 0 0.15)
+                    ]
                 ]
                 []
             ]
         , input [ type_ "submit", value "Submit", css [ buttonStyle, Css.marginTop (rem 1) ] ] []
         ]
+
+
+smallBorderRadius : Css.Style
+smallBorderRadius =
+    Css.borderRadius (rem 0.3)
 
 
 card : List (Html Msg) -> Html Msg
@@ -745,8 +756,9 @@ buttonStyle =
     Css.batch
         [ Css.padding2 (rem 0.3) (rem 0.5)
         , Css.border3 (px 1) Css.solid (Css.hsl 0 0 0)
-        , Css.borderRadius (rem 0.3)
+        , smallBorderRadius
         , Css.backgroundColor (Css.hsl 0 0 1)
+        , Css.boxShadow4 (rem 0.1) (rem 0.1) (rem 0.1) (Css.hsla 0 0 0 0.15)
         , Css.hover
             [ Css.property "filter" "brightness(90%)"
             ]
