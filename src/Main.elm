@@ -5,7 +5,7 @@ import Css exposing (auto, pct, px, rem, zero)
 import Css.Global as Global
 import Dict exposing (Dict)
 import Html as PlainHtml
-import Html.Styled as Html exposing (Html, button, div, form, h1, h2, input, label, p, text, textarea)
+import Html.Styled as Html exposing (Html, button, div, form, h1, h2, input, label, li, ol, p, text, textarea)
 import Html.Styled.Attributes exposing (css, placeholder, src, type_, value)
 import Html.Styled.Events exposing (onClick, onInput, onSubmit)
 import Json.Decode as Decode exposing (Decoder)
@@ -300,17 +300,31 @@ view model =
     div
         [ css
             [ bodyFont
-            , Css.maxWidth (rem 32)
             , Css.margin2 zero auto
             ]
         ]
-        ([ h1 [] [ text heading ] ]
-            ++ errorView model.error
-            ++ discussionView model discussedTopic
-            ++ sortBarView model
-            ++ [ topicListContainer model topicList model.newTopicInput
-               ]
-        )
+        [ div
+            [ css
+                [ limitWidth
+                , Css.marginBottom (rem 1)
+                ]
+            ]
+            ([ h1 [] [ text heading ] ]
+                ++ errorView model.error
+                ++ discussionView model discussedTopic
+                ++ [ div [ css [ Css.marginTop (rem 1) ] ] [ topicEntry model.user model.newTopicInput ] ]
+            )
+        , topicsToVote model topicList (sortBarView model.votes model.topics)
+        ]
+
+
+limitWidth : Css.Style
+limitWidth =
+    Css.batch
+        [ Css.maxWidth (rem 32)
+        , Css.marginLeft Css.auto
+        , Css.marginRight Css.auto
+        ]
 
 
 type alias TopicWithVotes =
@@ -401,52 +415,71 @@ discussionView model maybeDiscussedTopic =
             []
 
 
-sortBarView : Model -> List (Html Msg)
-sortBarView model =
-    let
-        voteCountMap =
-            voteCountMapFromVotes model.votes
-
-        showButton =
-            case model.topics of
-                Got topics ->
-                    if not (TopicList.isSorted voteCountMap topics) then
-                        True
-
-                    else
-                        False
-
-                _ ->
-                    False
-
-        visibility =
-            if showButton then
-                Css.visibility Css.visible
-
-            else
-                Css.visibility Css.hidden
-    in
-    [ div [ css [ visibility ] ] [ sortBar ] ]
+topicEntry : Remote User -> String -> Html Msg
+topicEntry user newTopicInput =
+    card [ submitForm user newTopicInput ]
 
 
-topicListContainer : TopicViewModel a -> Remote (List TopicWithVotes) -> String -> Html Msg
-topicListContainer model topics newTopicInput =
+topicsToVote : TopicViewModel a -> Remote (List TopicWithVotes) -> Html Msg -> Html Msg
+topicsToVote model remoteTopics toolbar =
     div
         [ css
             [ Css.backgroundColor (Css.hsl primaryHue 0.2 0.95)
-            , Css.padding2 (rem 1) (rem 1)
+            , containerPadding
             , Css.borderRadius (rem 0.5)
             ]
         ]
-        ([ listing
-            (topicListView model topics)
-         ]
-            ++ [ div
-                    [ css [ Css.marginTop (rem 2) ]
+        (case remoteTopics of
+            Loading ->
+                [ text "Loading topics…" ]
+
+            Got topics ->
+                [ div
+                    [ css
+                        [ Css.displayFlex
+                        , Css.flexDirection Css.row
+                        , Css.flexWrap Css.wrap
+                        , Css.alignItems Css.center
+                        , Css.marginBottom (rem 1)
+                        ]
                     ]
-                    [ card <| [ submitForm model.user newTopicInput ] ]
-               ]
+                    [ h2
+                        [ css
+                            [ Css.margin zero
+                            , Css.marginRight (rem 1)
+                            ]
+                        ]
+                        [ text "All topics" ]
+                    , toolbar
+                    ]
+                , ol
+                    [ css
+                        [ Css.property "display" "grid"
+
+                        -- TODO: Consider allowing smaller widths on narrow devices via media queries.
+                        , Css.property "grid-template-columns" "repeat(auto-fill, minmax(20rem, 1fr))"
+                        , Css.property "row-gap" "2rem"
+                        , Css.property "column-gap" "1rem"
+                        , Css.padding zero
+                        , Css.margin zero
+                        ]
+                    ]
+                    (List.map
+                        (\topic ->
+                            li
+                                [ css [ Css.listStyle Css.none ]
+                                ]
+                                [ topicCard model topic ]
+                        )
+                        topics
+                    )
+                ]
         )
+
+
+containerPadding : Css.Style
+containerPadding =
+    Css.padding2 (rem 1) (rem 1)
 
 
 bodyFont : Css.Style
@@ -464,16 +497,42 @@ stringFromError error =
             "There was an error with how the data looks like: " ++ errorMessage
 
 
-sortBar : Html Msg
-sortBar =
+sortBarView : Remote Votes -> Remote TopicList -> Html Msg
+sortBarView votes remoteTopics =
+    let
+        voteCountMap =
+            voteCountMapFromVotes votes
+
+        showButton =
+            case remoteTopics of
+                Got topics ->
+                    if not (TopicList.isSorted voteCountMap topics) then
+                        True
+
+                    else
+                        False
+
+                _ ->
+                    False
+
+        visibility =
+            if showButton then
+                Css.visibility Css.visible
+
+            else
+                Css.visibility Css.hidden
+    in
     div
         [ css
-            [ Css.displayFlex
-            , Css.flexDirection Css.row
-            , Css.alignItems Css.center
+            [ visibility
             ]
         ]
-        [ text "The topics' order has changed.", div [ css [ Css.marginLeft (rem 1) ] ] [ sortButton ] ]
+        [ sortBar ]
+
+
+sortBar : Html Msg
+sortBar =
+    sortButton
 
 
 sortButton : Html Msg
@@ -481,53 +540,23 @@ sortButton =
     button [ css [ buttonStyle ], onClick SortTopics ] [ text "Sort" ]
 
 
-listing : List (Html Msg) -> Html Msg
-listing contents =
-    div
-        [ css
-            [ Css.displayFlex
-            , Css.flexDirection Css.column
-            , Global.children
-                [ Global.everything
-                    [ Global.adjacentSiblings
-                        [ Global.everything
-                            [ Css.marginTop (rem 1)
-                            ]
-                        ]
-                    ]
-                ]
-            ]
-        ]
-        contents
-
-
-topicListView : TopicViewModel a -> Remote (List TopicWithVotes) -> List (Html Msg)
-topicListView model remoteTopics =
-    case remoteTopics of
-        Loading ->
-            [ text "Loading topics…" ]
-
-        Got topics ->
-            List.map (topicCard model) topics
-
-
 type alias TopicViewModel a =
     { a | user : Remote User, isAdmin : Bool }
 
 
 topicCard : TopicViewModel a -> TopicWithVotes -> Html Msg
-topicCard model topicEntry =
+topicCard model entry =
     let
         maybeVoteButton =
             case model.user of
                 Got user ->
                     let
                         voteCount =
-                            topicEntry.votes
+                            entry.votes
                                 |> List.length
 
                         userAlreadyVoted =
-                            List.any (\userId -> userId == user.id) topicEntry.votes
+                            List.any (\userId -> userId == user.id) entry.votes
 
                         state =
                             if userAlreadyVoted then
@@ -547,7 +576,7 @@ topicCard model topicEntry =
                                 }
                     in
                     [ button
-                        [ onClick (state.action user topicEntry.topic)
+                        [ onClick (state.action user entry.topic)
                         , css
                             [ buttonStyle
                             , Css.backgroundColor (Css.hsl primaryHue state.saturation state.lightness)
@@ -573,11 +602,11 @@ topicCard model topicEntry =
                         False
 
                     Got user ->
-                        user.id == topicEntry.topic.userId
+                        user.id == entry.topic.userId
 
         maybeDiscussButton =
             if model.isAdmin then
-                [ button [ onClick (Discuss topicEntry.topic.id), css [ buttonStyle ] ] [ text "Discuss" ] ]
+                [ button [ onClick (Discuss entry.topic.id), css [ buttonStyle ] ] [ text "Discuss" ] ]
 
             else
                 []
@@ -585,7 +614,7 @@ topicCard model topicEntry =
         maybeDeleteButton =
             if mayModify then
                 [ button
-                    [ onClick (DeleteTopic topicEntry.topic.id)
+                    [ onClick (DeleteTopic entry.topic.id)
                     , css [ buttonStyle ]
                     ]
                     [ text "Delete" ]
@@ -596,7 +625,7 @@ topicCard model topicEntry =
     in
     card
         [ div [ css [ Css.displayFlex, Css.flexDirection Css.column ] ]
-            [ text topicEntry.topic.topic
+            [ text entry.topic.topic
             , div
                 [ css
                     [ Css.marginTop (rem 1)
