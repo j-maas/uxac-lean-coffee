@@ -138,7 +138,10 @@ update msg model =
                                         | votes = Got votes
 
                                         -- If the votes are coming in for the first time, immediately sort the topics.
-                                        , topics = Remote.map (TopicList.sort voteCountMap) model.topics
+                                        , topics =
+                                            Remote.map
+                                                (TopicList.sort <| voteCountMapFromVotes <| Got votes)
+                                                model.topics
                                     }
 
                                 Got _ ->
