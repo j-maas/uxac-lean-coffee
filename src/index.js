@@ -11,7 +11,6 @@ import registerServiceWorker from "./registerServiceWorker";
 const firebaseConfig = {
   apiKey: process.env.ELM_APP_API_KEY,
   authDomain: process.env.ELM_APP_AUTH_DOMAIN,
-  databaseURL: process.env.ELM_APP_DATABASE_URL,
   projectId: process.env.ELM_APP_PROJECT_ID,
   storageBucket: process.env.ELM_APP_STORAGE_BUCKET,
   messagingSenderId: process.env.ELM_APP_MESSAGING_SENDER_ID,
