@@ -51,6 +51,15 @@ type alias Votes =
     Dict TopicId (List UserId)
 
 
+type alias Vote =
+    { userId : UserId, topicId : TopicId }
+
+
+voteFrom : User -> Topic -> Vote
+voteFrom user topic =
+    { userId = user.id, topicId = topic.id }
+
+
 type alias User =
     { id : UserId
     }
@@ -164,23 +173,23 @@ update msg model =
 
         SaveTopic user ->
             ( { model | newTopicInput = "" }
-            , submitTopicCmd model.timestampField { topic = model.newTopicInput, userId = user.id }
+            , submitTopic model.timestampField { topic = model.newTopicInput, userId = user.id }
             )
 
         DeleteTopic id ->
-            ( model, deleteTopicCmd id )
+            ( model, deleteTopic id model.votes )
 
         Discuss topicId ->
-            ( model, submitDiscussedTopicCmd topicId )
+            ( model, submitDiscussedTopic topicId )
 
         SortTopics ->
             ( { model | topics = Remote.map (TopicList.sort voteCountMap) model.topics }, Cmd.none )
 
         Upvote user topic ->
-            ( model, submitVoteCmd user topic )
+            ( model, submitVote (voteFrom user topic) )
 
         RemoveUpvote user topic ->
-            ( model, retractVoteCmd user topic )
+            ( model, retractVote (voteFrom user topic) )
 
         NewTopicInputChanged value ->
             ( { model | newTopicInput = value }, Cmd.none )
@@ -207,6 +216,63 @@ updateTopicList voteCountMap newTopics currentTopics =
             TopicList.update voteCountMap newTopics sortedList
     )
         |> Got
+
+
+submitTopic : TimestampField -> TopicSubmission -> Cmd msg
+submitTopic timestampField submission =
+    insertDoc
+        { collectionPath = topicCollectionPath
+        , data =
+            topicEncoder
+                submission
+                timestampField
+        }
+
+
+deleteTopic : TopicId -> Remote Votes -> Cmd msg
+deleteTopic topicId votes =
+    let
+        topicPath =
+            topicCollectionPath ++ [ topicId ]
+
+        {- We delete all associated votes as well.
+           TODO: This smells like there might be a race condition when others add votes when we delete them. Investigate whether we can delete the associated votes on the server side through functions.
+        -}
+        votePaths =
+            Remote.toMaybe votes
+                |> Maybe.withDefault Dict.empty
+                |> Dict.get topicId
+                |> Maybe.withDefault []
+                |> List.map (\userId -> votePath { userId = userId, topicId = topicId })
+    in
+    deleteDocs (topicPath :: votePaths)
+
+
+submitVote : Vote -> Cmd msg
+submitVote vote =
+    setDoc
+        { docPath = votePath vote
+        , data =
+            voteEncoder vote
+        }
+
+
+votePath : Vote -> Path
+votePath ids =
+    voteCollectionPath ++ [ ids.userId ++ ":" ++ ids.topicId ]
+
+
+retractVote : Vote -> Cmd msg
+retractVote vote =
+    deleteDocs [ votePath vote ]
+
+
+submitDiscussedTopic : TopicId -> Cmd msg
+submitDiscussedTopic topicId =
+    setDoc
+        { docPath = discussedDocPath
+        , data = discussedTopicEncoder topicId
+        }
 
 
 
@@ -624,12 +690,27 @@ subscriptions model =
 --- PORTS
 
 
+topicCollectionPath : Path
+topicCollectionPath =
+    [ "topics" ]
+
+
+voteCollectionPath : Path
+voteCollectionPath =
+    [ "votes" ]
+
+
+discussedDocPath : Path
+discussedDocPath =
+    [ "discussion", "discussed" ]
+
+
 firestoreSubscriptionsCmd : Cmd Msg
 firestoreSubscriptionsCmd =
     Cmd.batch
-        [ subscribe { kind = Collection, path = [ "test_topics" ], tag = TopicsTag }
-        , subscribe { kind = Collection, path = [ "test_votes" ], tag = VotesTag }
-        , subscribe { kind = Doc, path = [ "test_discussion", "discussed" ], tag = DiscussedTag }
+        [ subscribe { kind = Collection, path = topicCollectionPath, tag = TopicsTag }
+        , subscribe { kind = Collection, path = voteCollectionPath, tag = VotesTag }
+        , subscribe { kind = Doc, path = discussedDocPath, tag = DiscussedTag }
         ]
 
 
@@ -639,9 +720,12 @@ subscribe info =
         |> subscribe_
 
 
+port subscribe_ : Encode.Value -> Cmd msg
+
+
 type alias SubscriptionInfo =
     { kind : SubscriptionKind
-    , path : List String
+    , path : Path
     , tag : SubscriptionTag
     }
 
@@ -691,7 +775,11 @@ subscriptionKindDecoder =
             )
 
 
-encodePath : List String -> Encode.Value
+type alias Path =
+    List String
+
+
+encodePath : Path -> Encode.Value
 encodePath path =
     String.join "/" path
         |> Encode.string
@@ -740,15 +828,12 @@ subscriptionTagDecoder =
             )
 
 
-port subscribe_ : Encode.Value -> Cmd msg
-
-
-port receive_ : (Encode.Value -> msg) -> Sub msg
-
-
 receiveFirestoreSubscriptions : Sub Msg
 receiveFirestoreSubscriptions =
     receive_ parseFirestoreSubscription
+
+
+port receive_ : (Encode.Value -> msg) -> Sub msg
 
 
 parseFirestoreSubscription : Encode.Value -> Msg
@@ -788,6 +873,49 @@ parseFirestoreSubscription value =
             DecodeError error
 
 
+type alias InsertDocInfo =
+    { collectionPath : Path, data : Encode.Value }
+
+
+insertDoc : InsertDocInfo -> Cmd msg
+insertDoc info =
+    Encode.object
+        [ ( "path", encodePath info.collectionPath )
+        , ( "data", info.data )
+        ]
+        |> insertDoc_
+
+
+port insertDoc_ : Encode.Value -> Cmd msg
+
+
+type alias SetDocInfo =
+    { docPath : Path, data : Encode.Value }
+
+
+setDoc : SetDocInfo -> Cmd msg
+setDoc info =
+    Encode.object
+        [ ( "path", encodePath info.docPath )
+        , ( "data", info.data )
+        ]
+        |> setDoc_
+
+
+port setDoc_ : Encode.Value -> Cmd msg
+
+
+deleteDocs : List Path -> Cmd msg
+deleteDocs paths =
+    Encode.object
+        [ ( "paths", Encode.list encodePath paths )
+        ]
+        |> deleteDocs_
+
+
+port deleteDocs_ : Encode.Value -> Cmd msg
+
+
 
 -- DECODERS
 
@@ -823,54 +951,10 @@ type alias TopicSubmission =
     { topic : String, userId : String }
 
 
-submitTopicCmd : TimestampField -> TopicSubmission -> Cmd msg
-submitTopicCmd timestampField submission =
-    topicEncoder submission timestampField
-        |> submitTopic
-
-
-deleteTopicCmd : String -> Cmd msg
-deleteTopicCmd topicId =
-    deleteTopic topicId
-
-
-submitVoteCmd : User -> Topic -> Cmd msg
-submitVoteCmd user topic =
-    voteEncoder user topic
-        |> submitVote
-
-
-submitDiscussedTopicCmd : TopicId -> Cmd msg
-submitDiscussedTopicCmd topicId =
-    discussedTopicEncoder topicId
-        |> submitDiscussedTopic
-
-
-retractVoteCmd : User -> Topic -> Cmd msg
-retractVoteCmd user topic =
-    voteEncoder user topic
-        |> retractVote
-
-
 port receiveUser : (Encode.Value -> msg) -> Sub msg
 
 
 port errorReceived : (Encode.Value -> msg) -> Sub msg
-
-
-port submitTopic : Encode.Value -> Cmd msg
-
-
-port deleteTopic : String -> Cmd msg
-
-
-port submitVote : Encode.Value -> Cmd msg
-
-
-port submitDiscussedTopic : Encode.Value -> Cmd msg
-
-
-port retractVote : Encode.Value -> Cmd msg
 
 
 userDecoder : Decoder User
@@ -904,8 +988,8 @@ votesDecoder =
             (\topicId userId ->
                 ( topicId, userId )
             )
-            (Decode.field "topicId" Decode.string)
-            (Decode.field "userId" Decode.string)
+            (dataField "topicId" Decode.string)
+            (dataField "userId" Decode.string)
         )
         |> Decode.map
             (List.foldl
@@ -949,11 +1033,11 @@ topicEncoder { topic, userId } timestampField =
         ]
 
 
-voteEncoder : User -> Topic -> Encode.Value
-voteEncoder user topic =
+voteEncoder : Vote -> Encode.Value
+voteEncoder vote =
     Encode.object
-        [ ( "userId", Encode.string user.id )
-        , ( "topicId", Encode.string topic.id )
+        [ ( "userId", Encode.string vote.userId )
+        , ( "topicId", Encode.string vote.topicId )
         ]
 
 
