@@ -29,6 +29,51 @@ const app = Elm.Main.init({
   }
 });
 
+app.ports.subscribe_.subscribe(info => {
+  if (info.kind === "collection") {
+    subscribeToCollection(info.path, info.tag)
+  } else if (info.kind === "doc") {
+    subscribeToDoc(info.path, info.tag)
+  } else {
+    console.error(`Invalid subscription kind ${info.kind}.`);
+  }
+});
+
+function subscribeToCollection(path, tag) {
+  console.log(`Subscribing to collection at ${path}.`);
+
+  db.collection(path).onSnapshot(snapshot => {
+    const docs = [];
+
+    snapshot.forEach(doc => {
+      docs.push({
+        id: doc.id,
+        data: doc.data()
+      });
+    });
+
+    console.log(`Received new snapshot for collection ${tag}:\n`, docs);
+    app.ports.receive_.send({
+      tag: tag,
+      data: docs,
+    });
+  })
+}
+
+function subscribeToDoc(path, tag) {
+  console.log(`Subscribing to doc at ${path}.`);
+
+  db.doc(path).onSnapshot(snapshot => {
+    const doc = snapshot.data();
+
+    console.log(`Received new snapshot for doc ${tag}:\n`, docs);
+    app.ports.receive_.send({
+      tag: tag,
+      data: doc,
+    });
+  })
+}
+
 const discussion_collection_path = "test_discussion"
 const topic_collection_path = "test_topics"
 const votes_collection_path = "test_votes"
@@ -41,19 +86,6 @@ firebase.auth().signInAnonymously()
     app.ports.receiveUser.send({ id: id })
   })
   .catch(sendErrorToElm);
-
-db.collection(topic_collection_path).onSnapshot(docs => {
-  const topics = [];
-
-  docs.forEach(doc => {
-    const topic = doc.data();
-    topic.id = doc.id;
-    topics.push(topic);
-  });
-
-  console.log("Received new topics: ", topics);
-  app.ports.receiveTopics.send(topics);
-});
 
 db.collection(votes_collection_path).onSnapshot(docs => {
   const votes = [];
@@ -124,6 +156,8 @@ function getVoteId(data) {
 }
 
 function sendErrorToElm(error) {
+  console.error(error);
+
   app.ports.errorReceived.send({
     code: error.code,
     message: error.message

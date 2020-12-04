@@ -8,9 +8,9 @@ import Html as PlainHtml
 import Html.Styled as Html exposing (Html, button, div, form, h1, h2, input, label, p, text, textarea)
 import Html.Styled.Attributes exposing (css, placeholder, src, type_, value)
 import Html.Styled.Events exposing (onClick, onInput, onSubmit)
-import Json.Decode
+import Json.Decode as Decode exposing (Decoder)
 import Json.Decode.Pipeline
-import Json.Encode
+import Json.Encode as Encode
 import List.Extra as List
 import Remote exposing (Remote(..))
 import Time
@@ -66,7 +66,7 @@ type Error
 
 
 type alias TimestampField =
-    Json.Decode.Value
+    Decode.Value
 
 
 type alias Flags =
@@ -86,7 +86,7 @@ init flags =
       , error = Nothing
       , timestampField = flags.timestampField
       }
-    , Cmd.none
+    , firestoreSubscriptionsCmd
     )
 
 
@@ -95,17 +95,18 @@ init flags =
 
 
 type Msg
-    = UserReceived (Result Json.Decode.Error User)
-    | TopicsReceived (Result Json.Decode.Error (List Topic))
-    | VotesReceived (Result Json.Decode.Error Votes)
-    | DiscussedTopicReceived (Result Json.Decode.Error (Maybe TopicId))
+    = UserReceived (Result Decode.Error User)
+    | DecodeError Decode.Error
+    | TopicsReceived (List Topic)
+    | VotesReceived (Result Decode.Error Votes)
+    | DiscussedTopicReceived (Result Decode.Error (Maybe TopicId))
     | SaveTopic User
     | DeleteTopic TopicId
     | Discuss TopicId
     | SortTopics
     | Upvote User Topic
     | RemoveUpvote User Topic
-    | ErrorReceived (Result Json.Decode.Error Error)
+    | ErrorReceived (Result Decode.Error Error)
     | NewTopicInputChanged String
 
 
@@ -122,15 +123,13 @@ update msg model =
                     ( { model | user = Got user }, Cmd.none )
 
                 Err error ->
-                    ( { model | error = Just (ParsingError (Json.Decode.errorToString error)) }, Cmd.none )
+                    ( { model | error = Just (ParsingError (Decode.errorToString error)) }, Cmd.none )
 
-        TopicsReceived result ->
-            case result of
-                Ok topics ->
-                    ( { model | topics = updateTopicList voteCountMap topics model.topics }, Cmd.none )
+        DecodeError error ->
+            ( { model | error = Just <| ParsingError (Decode.errorToString error) }, Cmd.none )
 
-                Err error ->
-                    ( { model | error = Just (ParsingError (Json.Decode.errorToString error)) }, Cmd.none )
+        TopicsReceived topics ->
+            ( { model | topics = updateTopicList voteCountMap topics model.topics }, Cmd.none )
 
         VotesReceived result ->
             case result of
@@ -155,7 +154,7 @@ update msg model =
                     ( newModel, Cmd.none )
 
                 Err error ->
-                    ( { model | error = Just (ParsingError (Json.Decode.errorToString error)) }, Cmd.none )
+                    ( { model | error = Just (ParsingError (Decode.errorToString error)) }, Cmd.none )
 
         DiscussedTopicReceived result ->
             case result of
@@ -163,7 +162,7 @@ update msg model =
                     ( { model | discussed = topic }, Cmd.none )
 
                 Err error ->
-                    ( { model | error = Just (ParsingError (Json.Decode.errorToString error)) }, Cmd.none )
+                    ( { model | error = Just (ParsingError (Decode.errorToString error)) }, Cmd.none )
 
         ErrorReceived result ->
             case result of
@@ -171,7 +170,7 @@ update msg model =
                     ( { model | error = Just value }, Cmd.none )
 
                 Err error ->
-                    ( { model | error = Just (ParsingError (Json.Decode.errorToString error)) }, Cmd.none )
+                    ( { model | error = Just (ParsingError (Decode.errorToString error)) }, Cmd.none )
 
         SaveTopic user ->
             ( { model | newTopicInput = "" }
@@ -625,12 +624,187 @@ primaryHue =
 subscriptions : Model -> Sub Msg
 subscriptions model =
     Sub.batch
-        [ receiveUser (Json.Decode.decodeValue userDecoder >> UserReceived)
-        , receiveTopics (Json.Decode.decodeValue topicsDecoder >> TopicsReceived)
-        , receiveVotes (Json.Decode.decodeValue votesDecoder >> VotesReceived)
-        , receiveDiscussedTopic (Json.Decode.decodeValue discussedTopicDecoder >> DiscussedTopicReceived)
-        , errorReceived (Json.Decode.decodeValue errorDecoder >> ErrorReceived)
+        [ receiveFirestoreSubscriptions
+        , receiveUser (Decode.decodeValue userDecoder >> UserReceived)
+        , receiveVotes (Decode.decodeValue votesDecoder >> VotesReceived)
+        , receiveDiscussedTopic (Decode.decodeValue discussedTopicDecoder >> DiscussedTopicReceived)
+        , errorReceived (Decode.decodeValue errorDecoder >> ErrorReceived)
         ]
+
+
+
+--- PORTS
+
+
+firestoreSubscriptionsCmd : Cmd Msg
+firestoreSubscriptionsCmd =
+    Cmd.batch
+        [ subscribe { kind = Collection, path = [ "test_topics" ], tag = TopicsTag }
+        ]
+
+
+subscribe : SubscriptionInfo -> Cmd msg
+subscribe info =
+    encodeSubscriptionInfo info
+        |> subscribe_
+
+
+type alias SubscriptionInfo =
+    { kind : SubscriptionKind
+    , path : List String
+    , tag : SubscriptionTag
+    }
+
+
+encodeSubscriptionInfo : SubscriptionInfo -> Encode.Value
+encodeSubscriptionInfo info =
+    Encode.object
+        [ ( "kind", encodeSubscriptionKind info.kind )
+        , ( "path", encodePath info.path )
+        , ( "tag", encodeSubscriptionTag info.tag )
+        ]
+
+
+type SubscriptionKind
+    = Collection
+    | Doc
+
+
+encodeSubscriptionKind : SubscriptionKind -> Encode.Value
+encodeSubscriptionKind kind =
+    let
+        raw =
+            case kind of
+                Collection ->
+                    "collection"
+
+                Doc ->
+                    "doc"
+    in
+    Encode.string raw
+
+
+subscriptionKindDecoder : Decoder SubscriptionKind
+subscriptionKindDecoder =
+    Decode.string
+        |> Decode.andThen
+            (\raw ->
+                case raw of
+                    "collection" ->
+                        Decode.succeed Collection
+
+                    "doc" ->
+                        Decode.succeed Doc
+
+                    _ ->
+                        Decode.fail "Invalid subscription kind"
+            )
+
+
+encodePath : List String -> Encode.Value
+encodePath path =
+    String.join "/" path
+        |> Encode.string
+
+
+type SubscriptionTag
+    = TopicsTag
+
+
+encodeSubscriptionTag : SubscriptionTag -> Encode.Value
+encodeSubscriptionTag tag =
+    let
+        raw =
+            case tag of
+                TopicsTag ->
+                    "topics"
+    in
+    Encode.string raw
+
+
+subscriptionTagDecoder : Decoder SubscriptionTag
+subscriptionTagDecoder =
+    Decode.string
+        |> Decode.andThen
+            (\raw ->
+                case raw of
+                    "topics" ->
+                        Decode.succeed TopicsTag
+
+                    _ ->
+                        Decode.fail "Invalid subscription kind"
+            )
+
+
+port subscribe_ : Encode.Value -> Cmd msg
+
+
+port receive_ : (Encode.Value -> msg) -> Sub msg
+
+
+receiveFirestoreSubscriptions : Sub Msg
+receiveFirestoreSubscriptions =
+    receive_ parseFirestoreSubscription
+
+
+parseFirestoreSubscription : Encode.Value -> Msg
+parseFirestoreSubscription value =
+    let
+        decoded =
+            Decode.decodeValue
+                (Decode.field "tag" subscriptionTagDecoder
+                    |> Decode.andThen
+                        (\tag ->
+                            let
+                                dataDecoder : Decoder Msg
+                                dataDecoder =
+                                    case tag of
+                                        TopicsTag ->
+                                            topicsDecoder
+                                                |> Decode.map TopicsReceived
+                            in
+                            Decode.field "data" dataDecoder
+                        )
+                )
+                value
+    in
+    case decoded of
+        Ok msg ->
+            msg
+
+        Err error ->
+            DecodeError error
+
+
+
+-- DECODERS
+
+
+topicsDecoder : Decoder (List Topic)
+topicsDecoder =
+    Decode.list
+        (Decode.map4
+            (\id topic userId createdAt ->
+                { id = id
+                , topic = topic
+                , userId = userId
+                , createdAt = createdAt
+                }
+            )
+            (Decode.field "id" Decode.string)
+            (dataField "topic" Decode.string)
+            (dataField "userId" Decode.string)
+            (dataField "createdAt" (Decode.nullable timestampDecoder))
+        )
+
+
+dataField : String -> Decoder a -> Decoder a
+dataField field decoder =
+    Decode.field "data" (Decode.field field decoder)
+
+
+
+-- old ports
 
 
 type alias TopicSubmission =
@@ -666,63 +840,45 @@ retractVoteCmd user topic =
         |> retractVote
 
 
-port receiveUser : (Json.Encode.Value -> msg) -> Sub msg
+port receiveUser : (Encode.Value -> msg) -> Sub msg
 
 
-port receiveTopics : (Json.Encode.Value -> msg) -> Sub msg
+port receiveTopics : (Encode.Value -> msg) -> Sub msg
 
 
-port receiveVotes : (Json.Encode.Value -> msg) -> Sub msg
+port receiveVotes : (Encode.Value -> msg) -> Sub msg
 
 
-port receiveDiscussedTopic : (Json.Encode.Value -> msg) -> Sub msg
+port receiveDiscussedTopic : (Encode.Value -> msg) -> Sub msg
 
 
-port errorReceived : (Json.Encode.Value -> msg) -> Sub msg
+port errorReceived : (Encode.Value -> msg) -> Sub msg
 
 
-port submitTopic : Json.Encode.Value -> Cmd msg
+port submitTopic : Encode.Value -> Cmd msg
 
 
 port deleteTopic : String -> Cmd msg
 
 
-port submitVote : Json.Encode.Value -> Cmd msg
+port submitVote : Encode.Value -> Cmd msg
 
 
-port submitDiscussedTopic : Json.Encode.Value -> Cmd msg
+port submitDiscussedTopic : Encode.Value -> Cmd msg
 
 
-port retractVote : Json.Encode.Value -> Cmd msg
+port retractVote : Encode.Value -> Cmd msg
 
 
-userDecoder : Json.Decode.Decoder User
+userDecoder : Decoder User
 userDecoder =
-    Json.Decode.field "id" Json.Decode.string
-        |> Json.Decode.map (\id -> { id = id })
+    Decode.field "id" Decode.string
+        |> Decode.map (\id -> { id = id })
 
 
-topicsDecoder : Json.Decode.Decoder (List Topic)
-topicsDecoder =
-    Json.Decode.list
-        (Json.Decode.map4
-            (\id topic userId createdAt ->
-                { id = id
-                , topic = topic
-                , userId = userId
-                , createdAt = createdAt
-                }
-            )
-            (Json.Decode.field "id" Json.Decode.string)
-            (Json.Decode.field "topic" Json.Decode.string)
-            (Json.Decode.field "userId" Json.Decode.string)
-            (Json.Decode.field "createdAt" (Json.Decode.nullable timestampDecoder))
-        )
-
-
-timestampDecoder : Json.Decode.Decoder Time.Posix
+timestampDecoder : Decoder Time.Posix
 timestampDecoder =
-    Json.Decode.map2
+    Decode.map2
         (\seconds nanoseconds ->
             let
                 {- The nanoseconds count the fractions of seconds.
@@ -734,21 +890,21 @@ timestampDecoder =
             in
             Time.millisToPosix (round milliseconds)
         )
-        (Json.Decode.field "seconds" Json.Decode.int)
-        (Json.Decode.field "nanoseconds" Json.Decode.int)
+        (Decode.field "seconds" Decode.int)
+        (Decode.field "nanoseconds" Decode.int)
 
 
-votesDecoder : Json.Decode.Decoder Votes
+votesDecoder : Decoder Votes
 votesDecoder =
-    Json.Decode.list
-        (Json.Decode.map2
+    Decode.list
+        (Decode.map2
             (\topicId userId ->
                 ( topicId, userId )
             )
-            (Json.Decode.field "topicId" Json.Decode.string)
-            (Json.Decode.field "userId" Json.Decode.string)
+            (Decode.field "topicId" Decode.string)
+            (Decode.field "userId" Decode.string)
         )
-        |> Json.Decode.map
+        |> Decode.map
             (List.foldl
                 (\( topicId, userId ) dict ->
                     Dict.update topicId
@@ -766,40 +922,40 @@ votesDecoder =
             )
 
 
-discussedTopicDecoder : Json.Decode.Decoder (Maybe TopicId)
+discussedTopicDecoder : Decoder (Maybe TopicId)
 discussedTopicDecoder =
-    Json.Decode.maybe (Json.Decode.field "topicId" Json.Decode.string)
+    Decode.maybe (Decode.field "topicId" Decode.string)
 
 
-errorDecoder : Json.Decode.Decoder Error
+errorDecoder : Decoder Error
 errorDecoder =
-    Json.Decode.map2
+    Decode.map2
         (\code errorMessage ->
             FirestoreError { code = code, errorMessage = errorMessage }
         )
-        (Json.Decode.field "code" Json.Decode.string)
-        (Json.Decode.field "message" Json.Decode.string)
+        (Decode.field "code" Decode.string)
+        (Decode.field "message" Decode.string)
 
 
-topicEncoder : TopicSubmission -> TimestampField -> Json.Encode.Value
+topicEncoder : TopicSubmission -> TimestampField -> Encode.Value
 topicEncoder { topic, userId } timestampField =
-    Json.Encode.object
-        [ ( "topic", Json.Encode.string topic )
-        , ( "userId", Json.Encode.string userId )
+    Encode.object
+        [ ( "topic", Encode.string topic )
+        , ( "userId", Encode.string userId )
         , ( "createdAt", timestampField )
         ]
 
 
-voteEncoder : User -> Topic -> Json.Encode.Value
+voteEncoder : User -> Topic -> Encode.Value
 voteEncoder user topic =
-    Json.Encode.object
-        [ ( "userId", Json.Encode.string user.id )
-        , ( "topicId", Json.Encode.string topic.id )
+    Encode.object
+        [ ( "userId", Encode.string user.id )
+        , ( "topicId", Encode.string topic.id )
         ]
 
 
-discussedTopicEncoder : TopicId -> Json.Encode.Value
+discussedTopicEncoder : TopicId -> Encode.Value
 discussedTopicEncoder topicId =
-    Json.Encode.object
-        [ ( "topicId", Json.Encode.string topicId )
+    Encode.object
+        [ ( "topicId", Encode.string topicId )
         ]
