@@ -29,6 +29,7 @@ const app = Elm.Main.init({
   }
 });
 
+const discussion_collection_path = "test_discussion"
 const topic_collection_path = "test_topics"
 const votes_collection_path = "test_votes"
 
@@ -64,6 +65,12 @@ db.collection(votes_collection_path).onSnapshot(docs => {
 
   console.log("Received new votes: ", votes);
   app.ports.receiveVotes.send(votes);
+});
+
+db.collection(discussion_collection_path).doc("discussed").onSnapshot(snapshot => {
+  const data = snapshot.data();
+  console.log("Received new discussed topic: ", data);
+  app.ports.receiveDiscussedTopic.send(data);
 });
 
 app.ports.submitTopic.subscribe(data => {
@@ -102,6 +109,13 @@ app.ports.retractVote.subscribe(data => {
   db.collection(votes_collection_path)
     .doc(getVoteId(data))
     .delete()
+    .catch(sendErrorToElm);
+});
+
+app.ports.submitDiscussedTopic.subscribe(data => {
+  db.collection(discussion_collection_path)
+    .doc("discussed")
+    .set(data)
     .catch(sendErrorToElm);
 });
 

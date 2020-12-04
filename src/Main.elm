@@ -98,6 +98,7 @@ type Msg
     = UserReceived (Result Json.Decode.Error User)
     | TopicsReceived (Result Json.Decode.Error (List Topic))
     | VotesReceived (Result Json.Decode.Error Votes)
+    | DiscussedTopicReceived (Result Json.Decode.Error (Maybe TopicId))
     | SaveTopic User
     | DeleteTopic TopicId
     | Discuss TopicId
@@ -156,6 +157,14 @@ update msg model =
                 Err error ->
                     ( { model | error = Just (ParsingError (Json.Decode.errorToString error)) }, Cmd.none )
 
+        DiscussedTopicReceived result ->
+            case result of
+                Ok topic ->
+                    ( { model | discussed = topic }, Cmd.none )
+
+                Err error ->
+                    ( { model | error = Just (ParsingError (Json.Decode.errorToString error)) }, Cmd.none )
+
         ErrorReceived result ->
             case result of
                 Ok value ->
@@ -173,7 +182,7 @@ update msg model =
             ( model, deleteTopicCmd id )
 
         Discuss topicId ->
-            ( { model | discussed = Just topicId }, Cmd.none )
+            ( model, submitDiscussedTopicCmd topicId )
 
         SortTopics ->
             ( { model | topics = Remote.map (TopicList.sort voteCountMap) model.topics }, Cmd.none )
@@ -619,6 +628,7 @@ subscriptions model =
         [ receiveUser (Json.Decode.decodeValue userDecoder >> UserReceived)
         , receiveTopics (Json.Decode.decodeValue topicsDecoder >> TopicsReceived)
         , receiveVotes (Json.Decode.decodeValue votesDecoder >> VotesReceived)
+        , receiveDiscussedTopic (Json.Decode.decodeValue discussedTopicDecoder >> DiscussedTopicReceived)
         , errorReceived (Json.Decode.decodeValue errorDecoder >> ErrorReceived)
         ]
 
@@ -644,6 +654,12 @@ submitVoteCmd user topic =
         |> submitVote
 
 
+submitDiscussedTopicCmd : TopicId -> Cmd msg
+submitDiscussedTopicCmd topicId =
+    discussedTopicEncoder topicId
+        |> submitDiscussedTopic
+
+
 retractVoteCmd : User -> Topic -> Cmd msg
 retractVoteCmd user topic =
     voteEncoder user topic
@@ -659,6 +675,9 @@ port receiveTopics : (Json.Encode.Value -> msg) -> Sub msg
 port receiveVotes : (Json.Encode.Value -> msg) -> Sub msg
 
 
+port receiveDiscussedTopic : (Json.Encode.Value -> msg) -> Sub msg
+
+
 port errorReceived : (Json.Encode.Value -> msg) -> Sub msg
 
 
@@ -669,6 +688,9 @@ port deleteTopic : String -> Cmd msg
 
 
 port submitVote : Json.Encode.Value -> Cmd msg
+
+
+port submitDiscussedTopic : Json.Encode.Value -> Cmd msg
 
 
 port retractVote : Json.Encode.Value -> Cmd msg
@@ -744,6 +766,11 @@ votesDecoder =
             )
 
 
+discussedTopicDecoder : Json.Decode.Decoder (Maybe TopicId)
+discussedTopicDecoder =
+    Json.Decode.maybe (Json.Decode.field "topicId" Json.Decode.string)
+
+
 errorDecoder : Json.Decode.Decoder Error
 errorDecoder =
     Json.Decode.map2
@@ -768,4 +795,11 @@ voteEncoder user topic =
     Json.Encode.object
         [ ( "userId", Json.Encode.string user.id )
         , ( "topicId", Json.Encode.string topic.id )
+        ]
+
+
+discussedTopicEncoder : TopicId -> Json.Encode.Value
+discussedTopicEncoder topicId =
+    Json.Encode.object
+        [ ( "topicId", Json.Encode.string topicId )
         ]
