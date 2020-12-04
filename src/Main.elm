@@ -98,8 +98,8 @@ type Msg
     = UserReceived (Result Decode.Error User)
     | DecodeError Decode.Error
     | TopicsReceived (List Topic)
-    | VotesReceived (Result Decode.Error Votes)
-    | DiscussedTopicReceived (Result Decode.Error (Maybe TopicId))
+    | VotesReceived Votes
+    | DiscussedTopicReceived (Maybe TopicId)
     | SaveTopic User
     | DeleteTopic TopicId
     | Discuss TopicId
@@ -131,38 +131,28 @@ update msg model =
         TopicsReceived topics ->
             ( { model | topics = updateTopicList voteCountMap topics model.topics }, Cmd.none )
 
-        VotesReceived result ->
-            case result of
-                Ok votes ->
-                    let
-                        newModel =
-                            case model.votes of
-                                Loading ->
-                                    { model
-                                        | votes = Got votes
+        VotesReceived votes ->
+            let
+                newModel =
+                    case model.votes of
+                        Loading ->
+                            { model
+                                | votes = Got votes
 
-                                        -- If the votes are coming in for the first time, immediately sort the topics.
-                                        , topics =
-                                            Remote.map
-                                                (TopicList.sort <| voteCountMapFromVotes <| Got votes)
-                                                model.topics
-                                    }
+                                -- If the votes are coming in for the first time, immediately sort the topics.
+                                , topics =
+                                    Remote.map
+                                        (TopicList.sort <| voteCountMapFromVotes <| Got votes)
+                                        model.topics
+                            }
 
-                                Got _ ->
-                                    { model | votes = Got votes }
-                    in
-                    ( newModel, Cmd.none )
+                        Got _ ->
+                            { model | votes = Got votes }
+            in
+            ( newModel, Cmd.none )
 
-                Err error ->
-                    ( { model | error = Just (ParsingError (Decode.errorToString error)) }, Cmd.none )
-
-        DiscussedTopicReceived result ->
-            case result of
-                Ok topic ->
-                    ( { model | discussed = topic }, Cmd.none )
-
-                Err error ->
-                    ( { model | error = Just (ParsingError (Decode.errorToString error)) }, Cmd.none )
+        DiscussedTopicReceived topic ->
+            ( { model | discussed = topic }, Cmd.none )
 
         ErrorReceived result ->
             case result of
@@ -626,8 +616,6 @@ subscriptions model =
     Sub.batch
         [ receiveFirestoreSubscriptions
         , receiveUser (Decode.decodeValue userDecoder >> UserReceived)
-        , receiveVotes (Decode.decodeValue votesDecoder >> VotesReceived)
-        , receiveDiscussedTopic (Decode.decodeValue discussedTopicDecoder >> DiscussedTopicReceived)
         , errorReceived (Decode.decodeValue errorDecoder >> ErrorReceived)
         ]
 
@@ -640,6 +628,8 @@ firestoreSubscriptionsCmd : Cmd Msg
 firestoreSubscriptionsCmd =
     Cmd.batch
         [ subscribe { kind = Collection, path = [ "test_topics" ], tag = TopicsTag }
+        , subscribe { kind = Collection, path = [ "test_votes" ], tag = VotesTag }
+        , subscribe { kind = Doc, path = [ "test_discussion", "discussed" ], tag = DiscussedTag }
         ]
 
 
@@ -709,6 +699,8 @@ encodePath path =
 
 type SubscriptionTag
     = TopicsTag
+    | VotesTag
+    | DiscussedTag
 
 
 encodeSubscriptionTag : SubscriptionTag -> Encode.Value
@@ -718,6 +710,12 @@ encodeSubscriptionTag tag =
             case tag of
                 TopicsTag ->
                     "topics"
+
+                VotesTag ->
+                    "votes"
+
+                DiscussedTag ->
+                    "discussed"
     in
     Encode.string raw
 
@@ -730,6 +728,12 @@ subscriptionTagDecoder =
                 case raw of
                     "topics" ->
                         Decode.succeed TopicsTag
+
+                    "votes" ->
+                        Decode.succeed VotesTag
+
+                    "discussed" ->
+                        Decode.succeed DiscussedTag
 
                     _ ->
                         Decode.fail "Invalid subscription kind"
@@ -762,6 +766,14 @@ parseFirestoreSubscription value =
                                         TopicsTag ->
                                             topicsDecoder
                                                 |> Decode.map TopicsReceived
+
+                                        VotesTag ->
+                                            votesDecoder
+                                                |> Decode.map VotesReceived
+
+                                        DiscussedTag ->
+                                            discussedTopicDecoder
+                                                |> Decode.map DiscussedTopicReceived
                             in
                             Decode.field "data" dataDecoder
                         )
@@ -841,15 +853,6 @@ retractVoteCmd user topic =
 
 
 port receiveUser : (Encode.Value -> msg) -> Sub msg
-
-
-port receiveTopics : (Encode.Value -> msg) -> Sub msg
-
-
-port receiveVotes : (Encode.Value -> msg) -> Sub msg
-
-
-port receiveDiscussedTopic : (Encode.Value -> msg) -> Sub msg
 
 
 port errorReceived : (Encode.Value -> msg) -> Sub msg

@@ -66,7 +66,7 @@ function subscribeToDoc(path, tag) {
   db.doc(path).onSnapshot(snapshot => {
     const doc = snapshot.data();
 
-    console.log(`Received new snapshot for doc ${tag}:\n`, docs);
+    console.log(`Received new snapshot for doc ${tag}:\n`, doc);
     app.ports.receive_.send({
       tag: tag,
       data: doc,
@@ -86,24 +86,6 @@ firebase.auth().signInAnonymously()
     app.ports.receiveUser.send({ id: id })
   })
   .catch(sendErrorToElm);
-
-db.collection(votes_collection_path).onSnapshot(docs => {
-  const votes = [];
-
-  docs.forEach(doc => {
-    const vote = doc.data();
-    votes.push(vote);
-  });
-
-  console.log("Received new votes: ", votes);
-  app.ports.receiveVotes.send(votes);
-});
-
-db.collection(discussion_collection_path).doc("discussed").onSnapshot(snapshot => {
-  const data = snapshot.data();
-  console.log("Received new discussed topic: ", data);
-  app.ports.receiveDiscussedTopic.send(data);
-});
 
 app.ports.submitTopic.subscribe(data => {
   console.log("Submitting topic to database: ", data);
