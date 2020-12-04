@@ -40,6 +40,7 @@ firebase.auth().signInAnonymously()
 
     app.ports.receiveUser.send({ id: id })
   })
+  .catch(sendErrorToElm);
 
 db.collection(topic_collection_path).onSnapshot(docs => {
   const topics = [];
@@ -110,7 +111,7 @@ function getVoteId(data) {
 }
 
 function sendErrorToElm(error) {
-  app.ports.error.send({
+  app.ports.errorReceived.send({
     code: error.code,
     message: error.message
   });
