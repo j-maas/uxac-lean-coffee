@@ -1,4 +1,4 @@
-module Remote exposing (Remote(..), map)
+module Remote exposing (Remote(..), map, toMaybe)
 
 
 type Remote a
@@ -14,3 +14,13 @@ map f remote =
 
         Got a ->
             Got (f a)
+
+
+toMaybe : Remote a -> Maybe a
+toMaybe remote =
+    case remote of
+        Loading ->
+            Nothing
+
+        Got a ->
+            Just a

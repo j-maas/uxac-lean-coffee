@@ -11,6 +11,7 @@ import Html.Styled.Events exposing (onClick, onInput, onSubmit)
 import Json.Decode
 import Json.Decode.Pipeline
 import Json.Encode
+import List.Extra as List
 import Remote exposing (Remote(..))
 import Time
 import TopicList exposing (Topic, TopicId, TopicList, VoteCountMap)
@@ -30,7 +31,8 @@ main =
 
 
 type alias Model =
-    { topics : Remote TopicList
+    { discussed : Maybe TopicId
+    , topics : Remote TopicList
     , votes : Remote Votes
     , newTopicInput : String
     , user : Remote User
@@ -75,7 +77,8 @@ type alias Flags =
 
 init : Flags -> ( Model, Cmd Msg )
 init flags =
-    ( { topics = Loading
+    ( { discussed = Nothing
+      , topics = Loading
       , votes = Loading
       , newTopicInput = ""
       , user = Loading
@@ -97,6 +100,7 @@ type Msg
     | VotesReceived (Result Json.Decode.Error Votes)
     | SaveTopic User
     | DeleteTopic TopicId
+    | Discuss TopicId
     | SortTopics
     | Upvote User Topic
     | RemoveUpvote User Topic
@@ -168,6 +172,9 @@ update msg model =
         DeleteTopic id ->
             ( model, deleteTopicCmd id )
 
+        Discuss topicId ->
+            ( { model | discussed = Just topicId }, Cmd.none )
+
         SortTopics ->
             ( { model | topics = Remote.map (TopicList.sort voteCountMap) model.topics }, Cmd.none )
 
@@ -195,7 +202,8 @@ updateTopicList : VoteCountMap -> List Topic -> Remote TopicList -> Remote Topic
 updateTopicList voteCountMap newTopics currentTopics =
     (case currentTopics of
         Loading ->
-            TopicList.from voteCountMap newTopics
+            TopicList.from newTopics
+                |> TopicList.sort voteCountMap
 
         Got sortedList ->
             TopicList.update voteCountMap newTopics sortedList
@@ -221,6 +229,9 @@ view model =
                     else
                         ""
                    )
+
+        ( discussedTopic, topicList ) =
+            processTopics model
     in
     div
         [ css
@@ -230,58 +241,146 @@ view model =
             ]
         ]
         ([ h1 [] [ text heading ] ]
-            ++ (case model.error of
-                    Just error ->
-                        [ div
-                            [ css
-                                [ Css.border3 (px 1) Css.solid (Css.hsl 0 0.8 0.75)
-                                , Css.padding (rem 1)
-                                ]
-                            ]
-                            [ text <| stringFromError error ]
-                        ]
+            ++ errorView model.error
+            ++ discussionView model discussedTopic
+            ++ sortBarView model
+            ++ [ topicListContainer model topicList model.newTopicInput
+               ]
+        )
 
-                    Nothing ->
-                        []
-               )
-            ++ (let
-                    showButton =
-                        case model.topics of
-                            Got topics ->
-                                if not (TopicList.isSorted voteCountMap topics) then
-                                    True
 
-                                else
-                                    False
+type alias TopicWithVotes =
+    { topic : Topic
+    , votes : List UserId
+    }
 
-                            _ ->
-                                False
 
-                    visibility =
-                        if showButton then
-                            Css.visibility Css.visible
+processTopics :
+    { a
+        | discussed : Maybe TopicId
+        , topics : Remote TopicList
+        , votes : Remote Votes
+    }
+    -> ( Maybe TopicWithVotes, Remote (List TopicWithVotes) )
+processTopics model =
+    case model.topics of
+        Loading ->
+            ( Nothing, Loading )
 
-                        else
-                            Css.visibility Css.hidden
-                in
-                [ div [ css [ visibility ] ] [ sortBar ] ]
-               )
-            ++ [ div
-                    [ css
-                        [ Css.backgroundColor (Css.hsl primaryHue 0.2 0.95)
-                        , Css.padding2 (rem 1) (rem 1)
-                        , Css.borderRadius (rem 0.5)
-                        ]
-                    ]
-                    ([ listing
-                        (topicList model)
-                     ]
-                        ++ [ div
-                                [ css [ Css.marginTop (rem 2) ]
-                                ]
-                                [ card <| [ submitForm model.user model.newTopicInput ] ]
-                           ]
+        Got topics ->
+            let
+                topicsInVoting =
+                    Maybe.map
+                        (\votes ->
+                            TopicList.toList topics
+                                |> List.map
+                                    (\topic ->
+                                        { topic = topic
+                                        , votes =
+                                            Dict.get topic.id votes
+                                                |> Maybe.withDefault []
+                                        }
+                                    )
+                        )
+                        (Remote.toMaybe model.votes)
+                        |> Maybe.withDefault []
+            in
+            model.discussed
+                |> Maybe.map
+                    (\topicId ->
+                        extract (\entry -> entry.topic.id == topicId) topicsInVoting
+                            |> Tuple.mapSecond Got
                     )
+                |> Maybe.withDefault ( Nothing, Got topicsInVoting )
+
+
+extract : (a -> Bool) -> List a -> ( Maybe a, List a )
+extract predicate list =
+    List.partition predicate list
+        |> Tuple.mapFirst List.head
+
+
+errorView : Maybe Error -> List (Html Msg)
+errorView maybeError =
+    case maybeError of
+        Just error ->
+            [ div
+                [ css
+                    [ Css.border3 (px 1) Css.solid (Css.hsl 0 0.8 0.75)
+                    , Css.padding (rem 1)
+                    ]
+                ]
+                [ text <| stringFromError error ]
+            ]
+
+        Nothing ->
+            []
+
+
+discussionView : TopicViewModel a -> Maybe TopicWithVotes -> List (Html Msg)
+discussionView model maybeDiscussedTopic =
+    case maybeDiscussedTopic of
+        Just topic ->
+            [ div
+                [ css
+                    [ Css.borderRadius (rem 0.5)
+                    , Css.padding (rem 1)
+                    , Css.backgroundColor (Css.hsl primaryHue 1 0.5)
+                    ]
+                ]
+                [ h2 [ css [ Css.margin zero, Css.marginBottom (rem 1) ] ] [ text "In discussion" ]
+                , topicCard model topic
+                ]
+            ]
+
+        Nothing ->
+            []
+
+
+sortBarView : Model -> List (Html Msg)
+sortBarView model =
+    let
+        voteCountMap =
+            voteCountMapFromVotes model.votes
+
+        showButton =
+            case model.topics of
+                Got topics ->
+                    if not (TopicList.isSorted voteCountMap topics) then
+                        True
+
+                    else
+                        False
+
+                _ ->
+                    False
+
+        visibility =
+            if showButton then
+                Css.visibility Css.visible
+
+            else
+                Css.visibility Css.hidden
+    in
+    [ div [ css [ visibility ] ] [ sortBar ] ]
+
+
+topicListContainer : TopicViewModel a -> Remote (List TopicWithVotes) -> String -> Html Msg
+topicListContainer model topics newTopicInput =
+    div
+        [ css
+            [ Css.backgroundColor (Css.hsl primaryHue 0.2 0.95)
+            , Css.padding2 (rem 1) (rem 1)
+            , Css.borderRadius (rem 0.5)
+            ]
+        ]
+        ([ listing
+            (topicListView model topics)
+         ]
+            ++ [ div
+                    [ css [ Css.marginTop (rem 2) ]
+                    ]
+                    [ card <| [ submitForm model.user newTopicInput ] ]
                ]
         )
 
@@ -338,33 +437,33 @@ listing contents =
         contents
 
 
-topicList : Model -> List (Html Msg)
-topicList model =
-    case model.topics of
+topicListView : TopicViewModel a -> Remote (List TopicWithVotes) -> List (Html Msg)
+topicListView model remoteTopics =
+    case remoteTopics of
         Loading ->
             [ text "Loading topics…" ]
 
         Got topics ->
-            List.map (topicCard model) (TopicList.toList topics)
+            List.map (topicCard model) topics
 
 
-topicCard : Model -> Topic -> Html Msg
-topicCard model topic =
+type alias TopicViewModel a =
+    { a | user : Remote User, isAdmin : Bool }
+
+
+topicCard : TopicViewModel a -> TopicWithVotes -> Html Msg
+topicCard model topicEntry =
     let
         maybeVoteButton =
-            case ( model.user, model.votes ) of
-                ( Got user, Got votes ) ->
+            case model.user of
+                Got user ->
                     let
-                        votesForThis =
-                            Dict.get topic.id votes
-                                |> Maybe.withDefault []
-
                         voteCount =
-                            votesForThis
+                            topicEntry.votes
                                 |> List.length
 
                         userAlreadyVoted =
-                            List.any (\userId -> userId == user.id) votesForThis
+                            List.any (\userId -> userId == user.id) topicEntry.votes
 
                         state =
                             if userAlreadyVoted then
@@ -384,7 +483,7 @@ topicCard model topic =
                                 }
                     in
                     [ button
-                        [ onClick (state.action user topic)
+                        [ onClick (state.action user topicEntry.topic)
                         , css
                             [ buttonStyle
                             , Css.backgroundColor (Css.hsl primaryHue state.saturation state.lightness)
@@ -410,12 +509,19 @@ topicCard model topic =
                         False
 
                     Got user ->
-                        user.id == topic.userId
+                        user.id == topicEntry.topic.userId
+
+        maybeDiscussButton =
+            if model.isAdmin then
+                [ button [ onClick (Discuss topicEntry.topic.id), css [ buttonStyle ] ] [ text "Discuss" ] ]
+
+            else
+                []
 
         maybeDeleteButton =
             if mayModify then
                 [ button
-                    [ onClick (DeleteTopic topic.id)
+                    [ onClick (DeleteTopic topicEntry.topic.id)
                     , css [ buttonStyle ]
                     ]
                     [ text "Delete" ]
@@ -426,7 +532,7 @@ topicCard model topic =
     in
     card
         [ div [ css [ Css.displayFlex, Css.flexDirection Css.column ] ]
-            [ text topic.topic
+            [ text topicEntry.topic.topic
             , div
                 [ css
                     [ Css.marginTop (rem 1)
@@ -436,6 +542,7 @@ topicCard model topic =
                     ]
                 ]
                 (maybeVoteButton
+                    ++ maybeDiscussButton
                     ++ maybeDeleteButton
                 )
             ]
