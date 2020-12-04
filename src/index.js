@@ -37,7 +37,7 @@ firebase.auth().signInAnonymously()
     const id = user.user.uid
     console.log(`User is logged in with id ${id}.`)
 
-    app.ports.receiveUser.send({ id: id })
+    app.ports.receiveUser_.send({ id: id })
   })
   .catch(sendErrorToElm);
 
@@ -126,7 +126,7 @@ app.ports.deleteDocs_.subscribe(info => {
 function sendErrorToElm(error) {
   console.error(error);
 
-  app.ports.errorReceived.send({
+  app.ports.receiveError_.send({
     code: error.code,
     message: error.message
   });

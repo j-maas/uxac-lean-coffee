@@ -681,8 +681,8 @@ subscriptions : Model -> Sub Msg
 subscriptions model =
     Sub.batch
         [ receiveFirestoreSubscriptions
-        , receiveUser (Decode.decodeValue userDecoder >> UserReceived)
-        , errorReceived (Decode.decodeValue errorDecoder >> ErrorReceived)
+        , receiveUser_ (Decode.decodeValue userDecoder >> UserReceived)
+        , receiveError_ (Decode.decodeValue errorDecoder >> ErrorReceived)
         ]
 
 
@@ -916,6 +916,12 @@ deleteDocs paths =
 port deleteDocs_ : Encode.Value -> Cmd msg
 
 
+port receiveUser_ : (Encode.Value -> msg) -> Sub msg
+
+
+port receiveError_ : (Encode.Value -> msg) -> Sub msg
+
+
 
 -- DECODERS
 
@@ -945,16 +951,6 @@ dataField field decoder =
 
 
 -- old ports
-
-
-type alias TopicSubmission =
-    { topic : String, userId : String }
-
-
-port receiveUser : (Encode.Value -> msg) -> Sub msg
-
-
-port errorReceived : (Encode.Value -> msg) -> Sub msg
 
 
 userDecoder : Decoder User
@@ -1022,6 +1018,10 @@ errorDecoder =
         )
         (Decode.field "code" Decode.string)
         (Decode.field "message" Decode.string)
+
+
+type alias TopicSubmission =
+    { topic : String, userId : String }
 
 
 topicEncoder : TopicSubmission -> TimestampField -> Encode.Value
