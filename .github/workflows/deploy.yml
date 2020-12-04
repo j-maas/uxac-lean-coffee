@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - ci-secrets
 
 jobs:
   build-and-deploy:
