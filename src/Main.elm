@@ -358,7 +358,7 @@ view model =
             ([ h1 [] [ text heading ] ]
                 ++ errorView model.error
                 ++ [ discussionView model inDiscussion ]
-                ++ [ discussedTopics model (Debug.log "discussed" discussedList) ]
+                ++ [ discussedTopics model discussedList ]
                 ++ [ topicEntry model.user model.newTopicInput ]
             )
         , topicsToVote model topicList (sortBarView model.votes model.topics)
