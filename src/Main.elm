@@ -37,6 +37,9 @@ type alias Model =
     , discussed : List TopicId
     , votes : Remote Votes
     , continuationVotes : List ContinuationVote
+    , deadline : Maybe Time.Posix
+    , now : Time.Posix
+    , timerInput : Int
     , newTopicInput : String
     , user : Remote User
     , isAdmin : Bool
@@ -106,6 +109,9 @@ init flags =
       , discussed = []
       , votes = Loading
       , continuationVotes = []
+      , deadline = Nothing
+      , now = Time.millisToPosix 0
+      , timerInput = 10
       , newTopicInput = ""
       , user = Loading
       , isAdmin = flags.isAdmin
@@ -128,6 +134,7 @@ type Msg
     | TopicInDiscussionReceived (Maybe TopicId)
     | ContinuationVotesReceived (List ContinuationVote)
     | DiscussedTopicsReceived (List TopicId)
+    | DeadlineReceived (Maybe Time.Posix)
     | SaveTopic User
     | DeleteTopic TopicId
     | Discuss TopicId
@@ -140,6 +147,10 @@ type Msg
     | RemoveContinuationVote UserId
     | ErrorReceived (Result Decode.Error Error)
     | NewTopicInputChanged String
+    | Tick Time.Posix
+    | TimerInputChanged String
+    | TimerStarted
+    | TimerCleared
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -192,6 +203,9 @@ update msg model =
         DiscussedTopicsReceived discussed ->
             ( { model | discussed = discussed }, Cmd.none )
 
+        DeadlineReceived deadline ->
+            ( { model | deadline = deadline }, Cmd.none )
+
         ErrorReceived result ->
             case result of
                 Ok value ->
@@ -219,6 +233,7 @@ update msg model =
                             Cmd.batch
                                 [ finishDiscussion inDiscussion
                                 , clearContinuationVotes model.continuationVotes
+                                , clearDeadline
                                 ]
                     in
                     ( model, cmds )
@@ -229,11 +244,7 @@ update msg model =
         VoteAgainClicked ->
             case model.inDiscussion of
                 Just inDiscussion ->
-                    ( { model
-                        | discussed = inDiscussion :: model.discussed
-                      }
-                    , removeTopicInDiscussion
-                    )
+                    ( model, removeTopicInDiscussion )
 
                 Nothing ->
                     ( model, Cmd.none )
@@ -255,6 +266,32 @@ update msg model =
 
         NewTopicInputChanged value ->
             ( { model | newTopicInput = value }, Cmd.none )
+
+        Tick now ->
+            ( { model | now = now }, Cmd.none )
+
+        TimerInputChanged raw ->
+            case String.toInt raw of
+                Just newInput ->
+                    ( { model | timerInput = newInput }, Cmd.none )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        TimerStarted ->
+            let
+                timerInputInMilliseconds =
+                    model.timerInput * 1000 * 60
+
+                deadline =
+                    Time.posixToMillis model.now
+                        + timerInputInMilliseconds
+                        |> Time.millisToPosix
+            in
+            ( model, submitDeadline deadline )
+
+        TimerCleared ->
+            ( model, clearDeadline )
 
 
 voteCountMapFromVotes : Remote Votes -> VoteCountMap
@@ -384,6 +421,21 @@ removeTopicInDiscussion =
     deleteDocs [ inDiscussionDocPath ]
 
 
+submitDeadline : Time.Posix -> Cmd msg
+submitDeadline deadline =
+    setDoc
+        { docPath = discussionDeadlineDocPath
+        , doc = encodeDeadline deadline
+        }
+
+
+clearDeadline : Cmd msg
+clearDeadline =
+    deleteDocs
+        [ discussionDeadlineDocPath
+        ]
+
+
 
 ---- VIEW ----
 
@@ -421,7 +473,7 @@ view model =
             ]
             ([ h1 [] [ text heading ] ]
                 ++ errorView model.error
-                ++ [ discussionView model inDiscussion model.continuationVotes ]
+                ++ [ discussionView model inDiscussion model.continuationVotes model model.timerInput ]
                 ++ [ discussedTopics model discussedList ]
                 ++ [ topicEntry model.user model.newTopicInput ]
             )
@@ -509,8 +561,14 @@ errorView maybeError =
             []
 
 
-discussionView : Credentials a -> Maybe TopicWithVotes -> List ContinuationVote -> Html Msg
-discussionView creds maybeDiscussedTopic continuationVotes =
+discussionView :
+    Credentials a
+    -> Maybe TopicWithVotes
+    -> List ContinuationVote
+    -> { b | now : Time.Posix, deadline : Maybe Time.Posix }
+    -> Int
+    -> Html Msg
+discussionView creds maybeDiscussedTopic continuationVotes times timerInput =
     div
         [ css
             [ borderRadius
@@ -538,9 +596,94 @@ discussionView creds maybeDiscussedTopic continuationVotes =
                             ]
                         ]
                )
+            ++ [ remainingTime creds times timerInput ]
             ++ [ continuationVote creds.user continuationVotes
                ]
         )
+
+
+remainingTime : Credentials a -> { b | now : Time.Posix, deadline : Maybe Time.Posix } -> Int -> Html Msg
+remainingTime creds times currentInput =
+    let
+        timeDisplay =
+            remainingTimeDisplay times
+
+        maybeTimeInput =
+            if creds.isAdmin then
+                [ remainingTimeInput currentInput ]
+
+            else
+                []
+    in
+    div [ css [ listItemSpacing ] ]
+        (maybeTimeInput
+            ++ [ div [] [ timeDisplay ] ]
+        )
+
+
+remainingTimeDisplay : { a | now : Time.Posix, deadline : Maybe Time.Posix } -> Html Msg
+remainingTimeDisplay times =
+    div []
+        [ case times.deadline of
+            Nothing ->
+                text "The timer has not yet started."
+
+            Just deadline ->
+                let
+                    difference =
+                        Time.posixToMillis deadline
+                            - Time.posixToMillis times.now
+
+                    differenceMinutes =
+                        floor (toFloat difference / (60 * 1000))
+                            -- Cap at 0 to prevent negative times.
+                            |> max 0
+
+                    message =
+                        if differenceMinutes == 1 then
+                            "Less than 1 minute left…"
+
+                        else if differenceMinutes == 0 then
+                            "Time has run out. Do you want to stay with this topic or move on to the next?"
+
+                        else
+                            String.fromInt differenceMinutes ++ " minutes left…"
+                in
+                text message
+        ]
+
+
+remainingTimeInput : Int -> Html Msg
+remainingTimeInput currentInput =
+    div
+        [ css
+            [ Css.displayFlex
+            , Css.flexDirection Css.row
+            , Css.alignItems Css.center
+            ]
+        ]
+        [ form [ onSubmit TimerStarted ]
+            [ input
+                [ type_ "number"
+                , value (String.fromInt currentInput)
+                , onInput TimerInputChanged
+                , css [ inputStyle ]
+                ]
+                []
+            , input
+                [ type_ "submit"
+                , value "Start timer"
+                , css
+                    [ buttonStyle
+                    , Css.marginLeft (rem 1)
+                    ]
+                ]
+                []
+            ]
+        , button [ css [ buttonStyle, Css.marginLeft (rem 1) ], onClick TimerCleared ]
+            [ text "Clear timer"
+            ]
+        ]
 
 
 backgroundColor : Css.Style
@@ -935,16 +1078,14 @@ voteButton user votes msgs content =
         state =
             if userAlreadyVoted then
                 { action = msgs.downvote
-                , saturation = 1
-                , lightness = 0.6
+                , color = Css.hsl primaryHue 1 0.72
                 , border = Css.borderWidth (px 2)
                 , margin = px 0
                 }
 
             else
                 { action = msgs.upvote
-                , saturation = 0.4
-                , lightness = 0.9
+                , color = Css.hsl 0 0 1
                 , border = Css.batch []
                 , margin = px 1
                 }
@@ -953,7 +1094,7 @@ voteButton user votes msgs content =
         [ onClick state.action
         , css
             [ buttonStyle
-            , Css.backgroundColor (Css.hsl primaryHue state.saturation state.lightness)
+            , Css.backgroundColor state.color
             , state.border
             , Css.margin state.margin
             ]
@@ -1043,16 +1184,23 @@ newTopic user currentInput =
                 [ value currentInput
                 , onInput NewTopicInputChanged
                 , css
-                    [ Css.padding2 (rem 0.5) (rem 0.5)
+                    [ inputStyle
                     , Css.marginTop (rem 0.3)
-                    , smallBorderRadius
-                    , Css.border3 (px 1) Css.solid (Css.hsl 0 0 0)
-                    , Css.boxShadow5 Css.inset (rem 0.1) (rem 0.1) (rem 0.1) (Css.hsla 0 0 0 0.15)
                     ]
                 ]
                 []
             ]
         , input [ type_ "submit", value "Submit", css [ buttonStyle, Css.marginTop (rem 1) ] ] []
+        ]
+
+
+inputStyle : Css.Style
+inputStyle =
+    Css.batch
+        [ Css.padding2 (rem 0.5) (rem 0.5)
+        , smallBorderRadius
+        , Css.border3 (px 1) Css.solid (Css.hsl 0 0 0)
+        , Css.boxShadow5 Css.inset (rem 0.1) (rem 0.1) (rem 0.1) (Css.hsla 0 0 0 0.15)
         ]
 
 
@@ -1108,6 +1256,7 @@ subscriptions model =
         [ receiveFirestoreSubscriptions
         , receiveUser_ (Decode.decodeValue userDecoder >> UserReceived)
         , receiveError_ (Decode.decodeValue errorDecoder >> ErrorReceived)
+        , Time.every 1000 Tick
         ]
 
 
@@ -1127,7 +1276,12 @@ voteCollectionPath =
 
 inDiscussionDocPath : Path
 inDiscussionDocPath =
-    [ "inDiscussion", "topic" ]
+    [ "discussion", "topic" ]
+
+
+discussionDeadlineDocPath : Path
+discussionDeadlineDocPath =
+    [ "discussion", "deadline" ]
 
 
 continuationVoteCollectionPath : Path
@@ -1148,6 +1302,7 @@ firestoreSubscriptionsCmd =
         , subscribe { kind = Doc, path = inDiscussionDocPath, tag = InDiscussionTag }
         , subscribe { kind = Collection, path = continuationVoteCollectionPath, tag = ContinuationVotesTag }
         , subscribe { kind = Collection, path = discussedCollectionPath, tag = DiscussedTag }
+        , subscribe { kind = Doc, path = discussionDeadlineDocPath, tag = DeadlineTag }
         ]
 
 
@@ -1228,6 +1383,7 @@ type SubscriptionTag
     | InDiscussionTag
     | ContinuationVotesTag
     | DiscussedTag
+    | DeadlineTag
 
 
 encodeSubscriptionTag : SubscriptionTag -> Encode.Value
@@ -1249,6 +1405,9 @@ encodeSubscriptionTag tag =
 
                 DiscussedTag ->
                     "discussed"
+
+                DeadlineTag ->
+                    "deadline"
     in
     Encode.string raw
 
@@ -1273,6 +1432,9 @@ subscriptionTagDecoder =
 
                     "discussed" ->
                         Decode.succeed DiscussedTag
+
+                    "deadline" ->
+                        Decode.succeed DeadlineTag
 
                     _ ->
                         Decode.fail "Invalid subscription kind"
@@ -1318,6 +1480,10 @@ parseFirestoreSubscription value =
                                         DiscussedTag ->
                                             discussedDecoder
                                                 |> Decode.map DiscussedTopicsReceived
+
+                                        DeadlineTag ->
+                                            deadlineDecoder
+                                                |> Decode.map DeadlineReceived
                             in
                             Decode.field "data" dataDecoder
                         )
@@ -1482,6 +1648,22 @@ continuationVotesDecoder =
 discussedDecoder : Decoder (List TopicId)
 discussedDecoder =
     Decode.list (dataField "topicId" Decode.string)
+
+
+deadlineDecoder : Decoder (Maybe Time.Posix)
+deadlineDecoder =
+    Decode.maybe
+        (Decode.field "time" Decode.int
+            |> Decode.map
+                (\raw ->
+                    Time.millisToPosix raw
+                )
+        )
+
+
+encodeDeadline : Time.Posix -> Encode.Value
+encodeDeadline deadline =
+    Encode.object [ ( "time", Time.posixToMillis deadline |> Encode.int ) ]
 
 
 errorDecoder : Decoder Error
