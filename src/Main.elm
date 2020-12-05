@@ -233,6 +233,7 @@ update msg model =
                             Cmd.batch
                                 [ finishDiscussion inDiscussion
                                 , clearContinuationVotes model.continuationVotes
+                                , clearDeadline
                                 ]
                     in
                     ( model, cmds )
