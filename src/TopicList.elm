@@ -7,7 +7,7 @@ import Time
 type alias Topic =
     { id : TopicId
     , topic : String
-    , userId : String
+    , creator : String
     , createdAt : Maybe Time.Posix
     }
 

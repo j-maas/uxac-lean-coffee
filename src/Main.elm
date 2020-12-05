@@ -115,6 +115,7 @@ type Msg
     | SaveTopic User
     | DeleteTopic TopicId
     | Discuss TopicId
+    | FinishDiscussion
     | SortTopics
     | Upvote User Topic
     | RemoveUpvote User Topic
@@ -184,6 +185,19 @@ update msg model =
 
         Discuss topicId ->
             ( model, submitDiscussedTopic topicId )
+
+        FinishDiscussion ->
+            case model.inDiscussion of
+                Just inDiscussion ->
+                    ( { model
+                        | inDiscussion = Nothing
+                        , discussed = inDiscussion :: model.discussed
+                      }
+                    , Cmd.none
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
 
         SortTopics ->
             ( { model | topics = Remote.map (TopicList.sort voteCountMap) model.topics }, Cmd.none )
@@ -404,7 +418,7 @@ errorView maybeError =
             []
 
 
-discussionView : TopicViewModel a -> Maybe TopicWithVotes -> Html Msg
+discussionView : Credentials a -> Maybe TopicWithVotes -> Html Msg
 discussionView model maybeDiscussedTopic =
     div
         [ css
@@ -417,7 +431,7 @@ discussionView model maybeDiscussedTopic =
          ]
             ++ (case maybeDiscussedTopic of
                     Just topic ->
-                        [ topicCard model topic
+                        [ topicToDiscussCard model topic
                         ]
 
                     Nothing ->
@@ -440,7 +454,7 @@ backgroundColor =
     Css.backgroundColor (Css.hsl primaryHue 0.2 0.95)
 
 
-discussedTopics : TopicViewModel a -> List TopicWithVotes -> Html Msg
+discussedTopics : Credentials a -> List TopicWithVotes -> Html Msg
 discussedTopics model topics =
     Html.details
         [ css
@@ -460,7 +474,7 @@ discussedTopics model topics =
             (List.map
                 (\topic ->
                     li []
-                        [ topicCard model topic
+                        [ finishedTopicCard model topic
                         ]
                 )
                 topics
@@ -480,7 +494,7 @@ topicEntry user newTopicInput =
         [ submitForm user newTopicInput ]
 
 
-topicsToVote : TopicViewModel a -> Remote (List TopicWithVotes) -> Html Msg -> Html Msg
+topicsToVote : Credentials a -> Remote (List TopicWithVotes) -> Html Msg -> Html Msg
 topicsToVote model remoteTopics toolbar =
     div
         [ css
@@ -540,7 +554,7 @@ topicsToVote model remoteTopics toolbar =
                         (\topic ->
                             li
                                 []
-                                [ topicCard model topic ]
+                                [ topicToVoteCard model topic ]
                         )
                         topics
                     )
@@ -638,89 +652,181 @@ sortButton =
     button [ css [ buttonStyle ], onClick SortTopics ] [ text "Sort" ]
 
 
-type alias TopicViewModel a =
+type alias Credentials a =
     { a | user : Remote User, isAdmin : Bool }
 
 
-topicCard : TopicViewModel a -> TopicWithVotes -> Html Msg
-topicCard model entry =
+topicToDiscussCard : Credentials a -> TopicWithVotes -> Html Msg
+topicToDiscussCard creds entry =
     let
-        maybeVoteButton =
-            case model.user of
-                Got user ->
-                    let
-                        voteCount =
-                            entry.votes
-                                |> List.length
+        voteCount =
+            List.length entry.votes
 
-                        userAlreadyVoted =
-                            List.any (\userId -> userId == user.id) entry.votes
+        mayMod =
+            mayModify creds entry.topic.creator
 
-                        state =
-                            if userAlreadyVoted then
-                                { action = RemoveUpvote
-                                , saturation = 1
-                                , lightness = 0.6
-                                , border = Css.borderWidth (px 2)
-                                , margin = px 0
-                                }
-
-                            else
-                                { action = Upvote
-                                , saturation = 0.4
-                                , lightness = 0.9
-                                , border = Css.batch []
-                                , margin = px 1
-                                }
-                    in
-                    [ button
-                        [ onClick (state.action user entry.topic)
-                        , css
-                            [ buttonStyle
-                            , Css.backgroundColor (Css.hsl primaryHue state.saturation state.lightness)
-                            , state.border
-                            , Css.margin state.margin
-                            ]
-                        ]
-                        [ text
-                            ("👍 " ++ String.fromInt voteCount)
-                        ]
+        maybeFinishButton =
+            if mayMod then
+                [ button
+                    [ css [ buttonStyle ]
+                    , onClick FinishDiscussion
                     ]
-
-                _ ->
-                    []
-
-        mayModify =
-            if model.isAdmin then
-                True
-
-            else
-                case model.user of
-                    Loading ->
-                        False
-
-                    Got user ->
-                        user.id == entry.topic.userId
-
-        maybeDiscussButton =
-            if model.isAdmin then
-                [ button [ onClick (Discuss entry.topic.id), css [ buttonStyle ] ] [ text "Discuss" ] ]
+                    [ text "Finish" ]
+                ]
 
             else
                 []
 
         maybeDeleteButton =
-            if mayModify then
-                [ button
-                    [ onClick (DeleteTopic entry.topic.id)
-                    , css [ buttonStyle ]
-                    ]
-                    [ text "Delete" ]
+            if mayMod then
+                [ deleteButton entry.topic.id
                 ]
 
             else
                 []
     in
+    topicCard
+        ([ votesIndicator voteCount ]
+            ++ maybeFinishButton
+            ++ maybeDeleteButton
+        )
+        entry.topic.topic
+
+
+topicToVoteCard : Credentials a -> TopicWithVotes -> Html Msg
+topicToVoteCard creds entry =
+    let
+        maybeDiscussButton =
+            if creds.isAdmin then
+                [ button [ onClick (Discuss entry.topic.id), css [ buttonStyle ] ] [ text "Discuss" ] ]
+
+            else
+                []
+
+        mayMod =
+            mayModify creds entry.topic.creator
+
+        maybeDeleteButton =
+            if mayMod then
+                [ deleteButton entry.topic.id ]
+
+            else
+                []
+    in
+    topicCard
+        (maybeVoteButton creds.user entry
+            ++ maybeDiscussButton
+            ++ maybeDeleteButton
+        )
+        entry.topic.topic
+
+
+finishedTopicCard : Credentials a -> TopicWithVotes -> Html Msg
+finishedTopicCard creds entry =
+    let
+        voteCount =
+            List.length entry.votes
+
+        mayMod =
+            mayModify creds entry.topic.creator
+
+        maybeDeleteButton =
+            if mayMod then
+                [ deleteButton entry.topic.id ]
+
+            else
+                []
+    in
+    topicCard
+        ([ votesIndicator voteCount ]
+            ++ maybeDeleteButton
+        )
+        entry.topic.topic
+
+
+maybeVoteButton : Remote User -> TopicWithVotes -> List (Html Msg)
+maybeVoteButton remoteUser entry =
+    case remoteUser of
+        Got user ->
+            let
+                voteCount =
+                    entry.votes
+                        |> List.length
+
+                userAlreadyVoted =
+                    List.any (\userId -> userId == user.id) entry.votes
+
+                state =
+                    if userAlreadyVoted then
+                        { action = RemoveUpvote
+                        , saturation = 1
+                        , lightness = 0.6
+                        , border = Css.borderWidth (px 2)
+                        , margin = px 0
+                        }
+
+                    else
+                        { action = Upvote
+                        , saturation = 0.4
+                        , lightness = 0.9
+                        , border = Css.batch []
+                        , margin = px 1
+                        }
+            in
+            [ button
+                [ onClick (state.action user entry.topic)
+                , css
+                    [ buttonStyle
+                    , Css.backgroundColor (Css.hsl primaryHue state.saturation state.lightness)
+                    , state.border
+                    , Css.margin state.margin
+                    ]
+                ]
+                [ votesText voteCount ]
+            ]
+
+        _ ->
+            []
+
+
+votesIndicator : Int -> Html Msg
+votesIndicator count =
+    div [ css [ smallBorderRadius, backgroundColor, buttonPadding ] ]
+        [ votesText count
+        ]
+
+
+votesText : Int -> Html Msg
+votesText count =
+    text
+        ("👍 " ++ String.fromInt count)
+
+
+deleteButton : TopicId -> Html Msg
+deleteButton topicId =
+    button
+        [ onClick (DeleteTopic topicId)
+        , css [ buttonStyle ]
+        ]
+        [ text "Delete" ]
+
+
+mayModify : Credentials a -> UserId -> Bool
+mayModify creds creator =
+    if creds.isAdmin then
+        True
+
+    else
+        case creds.user of
+            Loading ->
+                False
+
+            Got user ->
+                user.id == creator
+
+
+topicCard : List (Html Msg) -> String -> Html Msg
+topicCard buttons topic =
     card
         [ div
             [ css
@@ -728,7 +834,7 @@ topicCard model entry =
                 , Css.flexDirection Css.column
                 ]
             ]
-            [ text entry.topic.topic
+            [ text topic
             , div
                 [ css
                     [ Css.marginTop (rem 1)
@@ -738,10 +844,7 @@ topicCard model entry =
                     , Css.justifyContent Css.spaceBetween
                     ]
                 ]
-                (maybeVoteButton
-                    ++ maybeDiscussButton
-                    ++ maybeDeleteButton
-                )
+                buttons
             ]
         ]
 
@@ -802,7 +905,7 @@ card content =
 buttonStyle : Css.Style
 buttonStyle =
     Css.batch
-        [ Css.padding2 (rem 0.3) (rem 0.5)
+        [ buttonPadding
         , Css.border3 (px 1) Css.solid (Css.hsl 0 0 0)
         , smallBorderRadius
         , Css.backgroundColor (Css.hsl 0 0 1)
@@ -811,6 +914,11 @@ buttonStyle =
             [ Css.property "filter" "brightness(90%)"
             ]
         ]
+
+
+buttonPadding : Css.Style
+buttonPadding =
+    Css.padding2 (rem 0.3) (rem 0.5)
 
 
 primaryHue : Float
@@ -1078,7 +1186,7 @@ topicsDecoder =
             (\id topic userId createdAt ->
                 { id = id
                 , topic = topic
-                , userId = userId
+                , creator = userId
                 , createdAt = createdAt
                 }
             )
