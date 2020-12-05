@@ -39,6 +39,7 @@ type alias Model =
     , continuationVotes : List ContinuationVote
     , deadline : Maybe Time.Posix
     , now : Time.Posix
+    , timerInput : Int
     , newTopicInput : String
     , user : Remote User
     , isAdmin : Bool
@@ -110,6 +111,7 @@ init flags =
       , continuationVotes = []
       , deadline = Just (Time.millisToPosix 1607192754000)
       , now = Time.millisToPosix 0
+      , timerInput = 10
       , newTopicInput = ""
       , user = Loading
       , isAdmin = flags.isAdmin
@@ -145,6 +147,9 @@ type Msg
     | ErrorReceived (Result Decode.Error Error)
     | NewTopicInputChanged String
     | Tick Time.Posix
+    | TimerInputChanged String
+    | TimerStarted
+    | TimerCleared
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -259,6 +264,29 @@ update msg model =
 
         Tick now ->
             ( { model | now = now }, Cmd.none )
+
+        TimerInputChanged raw ->
+            case String.toInt raw of
+                Just newInput ->
+                    ( { model | timerInput = newInput }, Cmd.none )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        TimerStarted ->
+            let
+                timerInputInMilliseconds =
+                    model.timerInput * 1000 * 60
+
+                deadline =
+                    Time.posixToMillis model.now
+                        + timerInputInMilliseconds
+                        |> Time.millisToPosix
+            in
+            ( { model | deadline = Just deadline }, Cmd.none )
+
+        TimerCleared ->
+            ( { model | deadline = Nothing }, Cmd.none )
 
 
 voteCountMapFromVotes : Remote Votes -> VoteCountMap
@@ -425,7 +453,7 @@ view model =
             ]
             ([ h1 [] [ text heading ] ]
                 ++ errorView model.error
-                ++ [ discussionView model inDiscussion model.continuationVotes model ]
+                ++ [ discussionView model inDiscussion model.continuationVotes model model.timerInput ]
                 ++ [ discussedTopics model discussedList ]
                 ++ [ topicEntry model.user model.newTopicInput ]
             )
@@ -518,8 +546,9 @@ discussionView :
     -> Maybe TopicWithVotes
     -> List ContinuationVote
     -> { b | now : Time.Posix, deadline : Maybe Time.Posix }
+    -> Int
     -> Html Msg
-discussionView creds maybeDiscussedTopic continuationVotes times =
+discussionView creds maybeDiscussedTopic continuationVotes times timerInput =
     div
         [ css
             [ borderRadius
@@ -547,20 +576,38 @@ discussionView creds maybeDiscussedTopic continuationVotes times =
                             ]
                         ]
                )
-            ++ (case times.deadline of
-                    Just deadline ->
-                        [ remainingTime { now = times.now, deadline = deadline } ]
-
-                    Nothing ->
-                        []
-               )
+            ++ [ remainingTime creds times timerInput ]
             ++ [ continuationVote creds.user continuationVotes
                ]
         )
 
 
-remainingTime : { now : Time.Posix, deadline : Time.Posix } -> Html Msg
-remainingTime times =
+remainingTime : Credentials a -> { b | now : Time.Posix, deadline : Maybe Time.Posix } -> Int -> Html Msg
+remainingTime creds times currentInput =
+    let
+        maybeTimeDisplay =
+            case times.deadline of
+                Nothing ->
+                    []
+
+                Just deadline ->
+                    [ remainingTimeDisplay { now = times.now, deadline = deadline } ]
+
+        maybeTimeInput =
+            if creds.isAdmin then
+                [ remainingTimeInput currentInput ]
+
+            else
+                []
+    in
+    div [ css [ listItemSpacing ] ]
+        (maybeTimeInput
+            ++ maybeTimeDisplay
+        )
+
+
+remainingTimeDisplay : { now : Time.Posix, deadline : Time.Posix } -> Html Msg
+remainingTimeDisplay times =
     let
         difference =
             Time.posixToMillis times.deadline
@@ -568,8 +615,48 @@ remainingTime times =
 
         differenceMinutes =
             round (toFloat difference / (60 * 1000))
+
+        pluralizedMinutes =
+            if differenceMinutes == 1 then
+                "minute"
+
+            else
+                "minutes"
     in
-    div [] [ text (String.fromInt differenceMinutes ++ " minutes left…") ]
+    div [] [ text (String.fromInt differenceMinutes ++ " " ++ pluralizedMinutes ++ " left…") ]
+
+
+remainingTimeInput : Int -> Html Msg
+remainingTimeInput currentInput =
+    div
+        [ css
+            [ Css.displayFlex
+            , Css.flexDirection Css.row
+            , Css.alignItems Css.center
+            ]
+        ]
+        [ form [ onSubmit TimerStarted ]
+            [ input
+                [ type_ "number"
+                , value (String.fromInt currentInput)
+                , onInput TimerInputChanged
+                , css [ inputStyle ]
+                ]
+                []
+            , input
+                [ type_ "submit"
+                , value "Start timer"
+                , css
+                    [ buttonStyle
+                    , Css.marginLeft (rem 1)
+                    ]
+                ]
+                []
+            ]
+        , button [ css [ buttonStyle, Css.marginLeft (rem 1) ], onClick TimerCleared ]
+            [ text "Clear timer"
+            ]
+        ]
 
 
 backgroundColor : Css.Style
@@ -1072,16 +1159,23 @@ newTopic user currentInput =
                 [ value currentInput
                 , onInput NewTopicInputChanged
                 , css
-                    [ Css.padding2 (rem 0.5) (rem 0.5)
+                    [ inputStyle
                     , Css.marginTop (rem 0.3)
-                    , smallBorderRadius
-                    , Css.border3 (px 1) Css.solid (Css.hsl 0 0 0)
-                    , Css.boxShadow5 Css.inset (rem 0.1) (rem 0.1) (rem 0.1) (Css.hsla 0 0 0 0.15)
                     ]
                 ]
                 []
             ]
         , input [ type_ "submit", value "Submit", css [ buttonStyle, Css.marginTop (rem 1) ] ] []
+        ]
+
+
+inputStyle : Css.Style
+inputStyle =
+    Css.batch
+        [ Css.padding2 (rem 0.5) (rem 0.5)
+        , smallBorderRadius
+        , Css.border3 (px 1) Css.solid (Css.hsl 0 0 0)
+        , Css.boxShadow5 Css.inset (rem 0.1) (rem 0.1) (rem 0.1) (Css.hsla 0 0 0 0.15)
         ]
 
 
