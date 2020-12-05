@@ -90,7 +90,7 @@ init : Flags -> ( Model, Cmd Msg )
 init flags =
     ( { inDiscussion = Nothing
       , topics = Loading
-      , discussed = [ "A50RpyQj2obozTOqWADb", "sIv0514c5JaThAZeV0Ia" ]
+      , discussed = []
       , votes = Loading
       , newTopicInput = ""
       , user = Loading
@@ -111,11 +111,13 @@ type Msg
     | DecodeError Decode.Error
     | TopicsReceived (List Topic)
     | VotesReceived Votes
-    | DiscussedTopicReceived (Maybe TopicId)
+    | TopicInDiscussionReceived (Maybe TopicId)
+    | DiscussedTopicsReceived (List TopicId)
     | SaveTopic User
     | DeleteTopic TopicId
     | Discuss TopicId
-    | FinishDiscussion
+    | FinishDiscussionClicked
+    | VoteAgainClicked
     | SortTopics
     | Upvote User Topic
     | RemoveUpvote User Topic
@@ -164,8 +166,11 @@ update msg model =
             in
             ( newModel, Cmd.none )
 
-        DiscussedTopicReceived topic ->
+        TopicInDiscussionReceived topic ->
             ( { model | inDiscussion = topic }, Cmd.none )
+
+        DiscussedTopicsReceived discussed ->
+            ( { model | discussed = discussed }, Cmd.none )
 
         ErrorReceived result ->
             case result of
@@ -184,16 +189,23 @@ update msg model =
             ( model, deleteTopic id model.votes )
 
         Discuss topicId ->
-            ( model, submitDiscussedTopic topicId )
+            ( model, submitTopicInDiscussion topicId )
 
-        FinishDiscussion ->
+        FinishDiscussionClicked ->
+            case model.inDiscussion of
+                Just inDiscussion ->
+                    ( model, finishDiscussion inDiscussion )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        VoteAgainClicked ->
             case model.inDiscussion of
                 Just inDiscussion ->
                     ( { model
-                        | inDiscussion = Nothing
-                        , discussed = inDiscussion :: model.discussed
+                        | discussed = inDiscussion :: model.discussed
                       }
-                    , Cmd.none
+                    , removeTopicInDiscussion
                     )
 
                 Nothing ->
@@ -239,7 +251,7 @@ submitTopic : TimestampField -> TopicSubmission -> Cmd msg
 submitTopic timestampField submission =
     insertDoc
         { collectionPath = topicCollectionPath
-        , data =
+        , doc =
             topicEncoder
                 submission
                 timestampField
@@ -269,7 +281,7 @@ submitVote : Vote -> Cmd msg
 submitVote vote =
     setDoc
         { docPath = votePath vote
-        , data =
+        , doc =
             voteEncoder vote
         }
 
@@ -284,12 +296,28 @@ retractVote vote =
     deleteDocs [ votePath vote ]
 
 
-submitDiscussedTopic : TopicId -> Cmd msg
-submitDiscussedTopic topicId =
+submitTopicInDiscussion : TopicId -> Cmd msg
+submitTopicInDiscussion topicId =
     setDoc
-        { docPath = discussedDocPath
-        , data = discussedTopicEncoder topicId
+        { docPath = inDiscussionDocPath
+        , doc = topicIdEncoder topicId
         }
+
+
+finishDiscussion : TopicId -> Cmd msg
+finishDiscussion topicId =
+    Cmd.batch
+        [ deleteDocs [ inDiscussionDocPath ]
+        , insertDoc
+            { collectionPath = discussedCollectionPath
+            , doc = topicIdEncoder topicId
+            }
+        ]
+
+
+removeTopicInDiscussion : Cmd msg
+removeTopicInDiscussion =
+    deleteDocs [ inDiscussionDocPath ]
 
 
 
@@ -330,7 +358,7 @@ view model =
             ([ h1 [] [ text heading ] ]
                 ++ errorView model.error
                 ++ [ discussionView model inDiscussion ]
-                ++ [ discussedTopics model discussedList ]
+                ++ [ discussedTopics model (Debug.log "discussed" discussedList) ]
                 ++ [ topicEntry model.user model.newTopicInput ]
             )
         , topicsToVote model topicList (sortBarView model.votes model.topics)
@@ -367,7 +395,7 @@ processTopics model =
 
         Got topics ->
             let
-                topicsInVoting =
+                topicsWithVotes =
                     Maybe.map
                         (\votes ->
                             TopicList.toList topics
@@ -382,17 +410,16 @@ processTopics model =
                         )
                         (Remote.toMaybe model.votes)
                         |> Maybe.withDefault []
+
+                ( maybeInDiscussion, remainingTopics ) =
+                    Maybe.map (\topicId -> extract (\entry -> entry.topic.id == topicId) topicsWithVotes)
+                        model.inDiscussion
+                        |> Maybe.withDefault ( Nothing, topicsWithVotes )
+
+                ( discussed, toVote ) =
+                    List.partition (\t -> List.member t.topic.id model.discussed) remainingTopics
             in
-            model.inDiscussion
-                |> Maybe.map
-                    (\topicId ->
-                        case extract (\entry -> entry.topic.id == topicId) topicsInVoting of
-                            ( maybeInDiscussion, remainingTopics ) ->
-                                case List.partition (\t -> List.member t.topic.id model.discussed) remainingTopics of
-                                    ( discussed, toVote ) ->
-                                        ( maybeInDiscussion, Got toVote, discussed )
-                    )
-                |> Maybe.withDefault ( Nothing, Got topicsInVoting, [] )
+            ( maybeInDiscussion, Got toVote, discussed )
 
 
 extract : (a -> Bool) -> List a -> ( Maybe a, List a )
@@ -523,7 +550,7 @@ topicsToVote model remoteTopics toolbar =
                             , Css.marginRight (rem 1)
                             ]
                         ]
-                        [ text "All topics" ]
+                        [ text "Suggested topics" ]
                     , toolbar
                     ]
                 , let
@@ -665,11 +692,23 @@ topicToDiscussCard creds entry =
         mayMod =
             mayModify creds entry.topic.creator
 
+        maybeVoteAgainButton =
+            if mayMod then
+                [ button
+                    [ css [ buttonStyle ]
+                    , onClick VoteAgainClicked
+                    ]
+                    [ text "Vote again" ]
+                ]
+
+            else
+                []
+
         maybeFinishButton =
             if mayMod then
                 [ button
                     [ css [ buttonStyle ]
-                    , onClick FinishDiscussion
+                    , onClick FinishDiscussionClicked
                     ]
                     [ text "Finish" ]
                 ]
@@ -688,6 +727,7 @@ topicToDiscussCard creds entry =
     topicCard
         ([ votesIndicator voteCount ]
             ++ maybeFinishButton
+            ++ maybeVoteAgainButton
             ++ maybeDeleteButton
         )
         entry.topic.topic
@@ -953,9 +993,14 @@ voteCollectionPath =
     [ "votes" ]
 
 
-discussedDocPath : Path
-discussedDocPath =
-    [ "discussion", "discussed" ]
+inDiscussionDocPath : Path
+inDiscussionDocPath =
+    [ "inDiscussion", "topic" ]
+
+
+discussedCollectionPath : Path
+discussedCollectionPath =
+    [ "discussed" ]
 
 
 firestoreSubscriptionsCmd : Cmd Msg
@@ -963,7 +1008,8 @@ firestoreSubscriptionsCmd =
     Cmd.batch
         [ subscribe { kind = Collection, path = topicCollectionPath, tag = TopicsTag }
         , subscribe { kind = Collection, path = voteCollectionPath, tag = VotesTag }
-        , subscribe { kind = Doc, path = discussedDocPath, tag = DiscussedTag }
+        , subscribe { kind = Doc, path = inDiscussionDocPath, tag = InDiscussionTag }
+        , subscribe { kind = Collection, path = discussedCollectionPath, tag = DiscussedTag }
         ]
 
 
@@ -1041,6 +1087,7 @@ encodePath path =
 type SubscriptionTag
     = TopicsTag
     | VotesTag
+    | InDiscussionTag
     | DiscussedTag
 
 
@@ -1054,6 +1101,9 @@ encodeSubscriptionTag tag =
 
                 VotesTag ->
                     "votes"
+
+                InDiscussionTag ->
+                    "inDiscussion"
 
                 DiscussedTag ->
                     "discussed"
@@ -1072,6 +1122,9 @@ subscriptionTagDecoder =
 
                     "votes" ->
                         Decode.succeed VotesTag
+
+                    "inDiscussion" ->
+                        Decode.succeed InDiscussionTag
 
                     "discussed" ->
                         Decode.succeed DiscussedTag
@@ -1109,9 +1162,13 @@ parseFirestoreSubscription value =
                                             votesDecoder
                                                 |> Decode.map VotesReceived
 
+                                        InDiscussionTag ->
+                                            inDiscussionDecoder
+                                                |> Decode.map TopicInDiscussionReceived
+
                                         DiscussedTag ->
-                                            discussedTopicDecoder
-                                                |> Decode.map DiscussedTopicReceived
+                                            discussedDecoder
+                                                |> Decode.map DiscussedTopicsReceived
                             in
                             Decode.field "data" dataDecoder
                         )
@@ -1127,14 +1184,14 @@ parseFirestoreSubscription value =
 
 
 type alias InsertDocInfo =
-    { collectionPath : Path, data : Encode.Value }
+    { collectionPath : Path, doc : Encode.Value }
 
 
 insertDoc : InsertDocInfo -> Cmd msg
 insertDoc info =
     Encode.object
         [ ( "path", encodePath info.collectionPath )
-        , ( "data", info.data )
+        , ( "doc", info.doc )
         ]
         |> insertDoc_
 
@@ -1143,14 +1200,14 @@ port insertDoc_ : Encode.Value -> Cmd msg
 
 
 type alias SetDocInfo =
-    { docPath : Path, data : Encode.Value }
+    { docPath : Path, doc : Encode.Value }
 
 
 setDoc : SetDocInfo -> Cmd msg
 setDoc info =
     Encode.object
         [ ( "path", encodePath info.docPath )
-        , ( "data", info.data )
+        , ( "doc", info.doc )
         ]
         |> setDoc_
 
@@ -1200,10 +1257,6 @@ topicsDecoder =
 dataField : String -> Decoder a -> Decoder a
 dataField field decoder =
     Decode.field "data" (Decode.field field decoder)
-
-
-
--- old ports
 
 
 userDecoder : Decoder User
@@ -1258,9 +1311,14 @@ votesDecoder =
             )
 
 
-discussedTopicDecoder : Decoder (Maybe TopicId)
-discussedTopicDecoder =
+inDiscussionDecoder : Decoder (Maybe TopicId)
+inDiscussionDecoder =
     Decode.maybe (Decode.field "topicId" Decode.string)
+
+
+discussedDecoder : Decoder (List TopicId)
+discussedDecoder =
+    Decode.list (dataField "topicId" Decode.string)
 
 
 errorDecoder : Decoder Error
@@ -1294,8 +1352,8 @@ voteEncoder vote =
         ]
 
 
-discussedTopicEncoder : TopicId -> Encode.Value
-discussedTopicEncoder topicId =
+topicIdEncoder : TopicId -> Encode.Value
+topicIdEncoder topicId =
     Encode.object
         [ ( "topicId", Encode.string topicId )
         ]
