@@ -1075,16 +1075,14 @@ voteButton user votes msgs content =
         state =
             if userAlreadyVoted then
                 { action = msgs.downvote
-                , saturation = 1
-                , lightness = 0.6
+                , color = Css.hsl primaryHue 1 0.72
                 , border = Css.borderWidth (px 2)
                 , margin = px 0
                 }
 
             else
                 { action = msgs.upvote
-                , saturation = 0.4
-                , lightness = 0.9
+                , color = Css.hsl 0 0 1
                 , border = Css.batch []
                 , margin = px 1
                 }
@@ -1093,7 +1091,7 @@ voteButton user votes msgs content =
         [ onClick state.action
         , css
             [ buttonStyle
-            , Css.backgroundColor (Css.hsl primaryHue state.saturation state.lightness)
+            , Css.backgroundColor state.color
             , state.border
             , Css.margin state.margin
             ]
