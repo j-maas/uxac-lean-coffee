@@ -37,6 +37,8 @@ type alias Model =
     , discussed : List TopicId
     , votes : Remote Votes
     , continuationVotes : List ContinuationVote
+    , deadline : Maybe Time.Posix
+    , now : Time.Posix
     , newTopicInput : String
     , user : Remote User
     , isAdmin : Bool
@@ -106,6 +108,8 @@ init flags =
       , discussed = []
       , votes = Loading
       , continuationVotes = []
+      , deadline = Just (Time.millisToPosix 1607192754000)
+      , now = Time.millisToPosix 0
       , newTopicInput = ""
       , user = Loading
       , isAdmin = flags.isAdmin
@@ -140,6 +144,7 @@ type Msg
     | RemoveContinuationVote UserId
     | ErrorReceived (Result Decode.Error Error)
     | NewTopicInputChanged String
+    | Tick Time.Posix
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -251,6 +256,9 @@ update msg model =
 
         NewTopicInputChanged value ->
             ( { model | newTopicInput = value }, Cmd.none )
+
+        Tick now ->
+            ( { model | now = now }, Cmd.none )
 
 
 voteCountMapFromVotes : Remote Votes -> VoteCountMap
@@ -417,7 +425,7 @@ view model =
             ]
             ([ h1 [] [ text heading ] ]
                 ++ errorView model.error
-                ++ [ discussionView model inDiscussion model.continuationVotes ]
+                ++ [ discussionView model inDiscussion model.continuationVotes model ]
                 ++ [ discussedTopics model discussedList ]
                 ++ [ topicEntry model.user model.newTopicInput ]
             )
@@ -505,8 +513,13 @@ errorView maybeError =
             []
 
 
-discussionView : Credentials a -> Maybe TopicWithVotes -> List ContinuationVote -> Html Msg
-discussionView creds maybeDiscussedTopic continuationVotes =
+discussionView :
+    Credentials a
+    -> Maybe TopicWithVotes
+    -> List ContinuationVote
+    -> { b | now : Time.Posix, deadline : Maybe Time.Posix }
+    -> Html Msg
+discussionView creds maybeDiscussedTopic continuationVotes times =
     div
         [ css
             [ borderRadius
@@ -534,9 +547,29 @@ discussionView creds maybeDiscussedTopic continuationVotes =
                             ]
                         ]
                )
+            ++ (case times.deadline of
+                    Just deadline ->
+                        [ remainingTime { now = times.now, deadline = deadline } ]
+
+                    Nothing ->
+                        []
+               )
             ++ [ continuationVote creds.user continuationVotes
                ]
         )
+
+
+remainingTime : { now : Time.Posix, deadline : Time.Posix } -> Html Msg
+remainingTime times =
+    let
+        difference =
+            Time.posixToMillis times.deadline
+                - Time.posixToMillis times.now
+
+        differenceMinutes =
+            round (toFloat difference / (60 * 1000))
+    in
+    div [] [ text (String.fromInt differenceMinutes ++ " minutes left…") ]
 
 
 backgroundColor : Css.Style
@@ -1101,10 +1134,18 @@ primaryHue =
 subscriptions : Model -> Sub Msg
 subscriptions model =
     Sub.batch
-        [ receiveFirestoreSubscriptions
-        , receiveUser_ (Decode.decodeValue userDecoder >> UserReceived)
-        , receiveError_ (Decode.decodeValue errorDecoder >> ErrorReceived)
-        ]
+        ([ receiveFirestoreSubscriptions
+         , receiveUser_ (Decode.decodeValue userDecoder >> UserReceived)
+         , receiveError_ (Decode.decodeValue errorDecoder >> ErrorReceived)
+         ]
+            ++ (case model.deadline of
+                    Just _ ->
+                        [ Time.every 1000 Tick ]
+
+                    Nothing ->
+                        []
+               )
+        )
 
 
 
