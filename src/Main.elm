@@ -693,7 +693,7 @@ topicToDiscussCard creds entry =
             mayModify creds entry.topic.creator
 
         maybeVoteAgainButton =
-            if mayMod then
+            if creds.isAdmin then
                 [ button
                     [ css [ buttonStyle ]
                     , onClick VoteAgainClicked
@@ -705,7 +705,7 @@ topicToDiscussCard creds entry =
                 []
 
         maybeFinishButton =
-            if mayMod then
+            if creds.isAdmin then
                 [ button
                     [ css [ buttonStyle ]
                     , onClick FinishDiscussionClicked
