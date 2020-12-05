@@ -265,7 +265,7 @@ deleteTopic topicId votes =
             topicCollectionPath ++ [ topicId ]
 
         {- We delete all associated votes as well.
-           TODO: This smells like there might be a race condition when others add votes when we delete them. Investigate whether we can delete the associated votes on the server side through functions.
+           TODO: This smells like there might be a race condition when others add votes when we delete them. Instead, use batches. See https://github.com/Y0hy0h/uxac-lean-coffee/issues/37.
         -}
         votePaths =
             Remote.toMaybe votes
@@ -466,7 +466,7 @@ discussionView model maybeDiscussedTopic =
                             [ css [ Css.opacity (num 0.5) ]
                             ]
                             [ card
-                                [ div [ css [ Css.width (pct 100), Css.height (rem 5) ] ]
+                                [ div [ css [ Css.width (pct 100), Css.minHeight (rem 5) ] ]
                                     [ text "Currently there is no topic in discussion. Vote for one below."
                                     ]
                                 ]
