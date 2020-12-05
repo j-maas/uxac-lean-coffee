@@ -229,11 +229,7 @@ update msg model =
         VoteAgainClicked ->
             case model.inDiscussion of
                 Just inDiscussion ->
-                    ( { model
-                        | discussed = inDiscussion :: model.discussed
-                      }
-                    , removeTopicInDiscussion
-                    )
+                    ( model, removeTopicInDiscussion )
 
                 Nothing ->
                     ( model, Cmd.none )
