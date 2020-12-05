@@ -32,8 +32,9 @@ main =
 
 
 type alias Model =
-    { discussed : Maybe TopicId
+    { inDiscussion : Maybe TopicId
     , topics : Remote TopicList
+    , discussed : List TopicId
     , votes : Remote Votes
     , newTopicInput : String
     , user : Remote User
@@ -87,8 +88,9 @@ type alias Flags =
 
 init : Flags -> ( Model, Cmd Msg )
 init flags =
-    ( { discussed = Nothing
+    ( { inDiscussion = Nothing
       , topics = Loading
+      , discussed = [ "A50RpyQj2obozTOqWADb", "sIv0514c5JaThAZeV0Ia" ]
       , votes = Loading
       , newTopicInput = ""
       , user = Loading
@@ -162,7 +164,7 @@ update msg model =
             ( newModel, Cmd.none )
 
         DiscussedTopicReceived topic ->
-            ( { model | discussed = topic }, Cmd.none )
+            ( { model | inDiscussion = topic }, Cmd.none )
 
         ErrorReceived result ->
             case result of
@@ -295,7 +297,7 @@ view model =
                         ""
                    )
 
-        ( discussedTopic, topicList ) =
+        ( inDiscussion, topicList, discussedList ) =
             processTopics model
     in
     div
@@ -308,12 +310,14 @@ view model =
             [ css
                 [ limitWidth
                 , Css.marginBottom (rem 1)
+                , listItemSpacing
                 ]
             ]
             ([ h1 [] [ text heading ] ]
                 ++ errorView model.error
-                ++ [ discussionView model discussedTopic ]
-                ++ [ div [ css [ Css.marginTop (rem 1) ] ] [ topicEntry model.user model.newTopicInput ] ]
+                ++ [ discussionView model inDiscussion ]
+                ++ [ discussedTopics model discussedList ]
+                ++ [ topicEntry model.user model.newTopicInput ]
             )
         , topicsToVote model topicList (sortBarView model.votes model.topics)
         ]
@@ -336,15 +340,16 @@ type alias TopicWithVotes =
 
 processTopics :
     { a
-        | discussed : Maybe TopicId
+        | inDiscussion : Maybe TopicId
         , topics : Remote TopicList
+        , discussed : List TopicId
         , votes : Remote Votes
     }
-    -> ( Maybe TopicWithVotes, Remote (List TopicWithVotes) )
+    -> ( Maybe TopicWithVotes, Remote (List TopicWithVotes), List TopicWithVotes )
 processTopics model =
     case model.topics of
         Loading ->
-            ( Nothing, Loading )
+            ( Nothing, Loading, [] )
 
         Got topics ->
             let
@@ -364,13 +369,16 @@ processTopics model =
                         (Remote.toMaybe model.votes)
                         |> Maybe.withDefault []
             in
-            model.discussed
+            model.inDiscussion
                 |> Maybe.map
                     (\topicId ->
-                        extract (\entry -> entry.topic.id == topicId) topicsInVoting
-                            |> Tuple.mapSecond Got
+                        case extract (\entry -> entry.topic.id == topicId) topicsInVoting of
+                            ( maybeInDiscussion, remainingTopics ) ->
+                                case List.partition (\t -> List.member t.topic.id model.discussed) remainingTopics of
+                                    ( discussed, toVote ) ->
+                                        ( maybeInDiscussion, Got toVote, discussed )
                     )
-                |> Maybe.withDefault ( Nothing, Got topicsInVoting )
+                |> Maybe.withDefault ( Nothing, Got topicsInVoting, [] )
 
 
 extract : (a -> Bool) -> List a -> ( Maybe a, List a )
@@ -432,6 +440,34 @@ backgroundColor =
     Css.backgroundColor (Css.hsl primaryHue 0.2 0.95)
 
 
+discussedTopics : TopicViewModel a -> List TopicWithVotes -> Html Msg
+discussedTopics model topics =
+    Html.details
+        [ css
+            [ containerPadding
+            , backgroundColor
+            , borderRadius
+            ]
+        ]
+        [ Html.summary [] [ text "Discussed topics" ]
+        , ol
+            [ css
+                [ listUnstyle
+                , listItemSpacing
+                , Css.marginTop (rem 1)
+                ]
+            ]
+            (List.map
+                (\topic ->
+                    li []
+                        [ topicCard model topic
+                        ]
+                )
+                topics
+            )
+        ]
+
+
 topicEntry : Remote User -> String -> Html Msg
 topicEntry user newTopicInput =
     div
@@ -482,20 +518,11 @@ topicsToVote model remoteTopics toolbar =
                   in
                   ol
                     [ css
-                        [ Css.padding zero
-                        , Css.margin zero
+                        [ listUnstyle
                         , Css.displayFlex
                         , Css.flexDirection Css.column
                         , Media.withMedia [ Media.all [ Media.maxWidth breakpoint ] ]
-                            [ Global.children
-                                [ Global.everything
-                                    [ Global.adjacentSiblings
-                                        [ Global.everything
-                                            [ Css.marginTop (rem 1)
-                                            ]
-                                        ]
-                                    ]
-                                ]
+                            [ listItemSpacing
                             ]
                         , Media.withMedia [ Media.all [ Media.minWidth breakpoint ] ]
                             [ Css.property
@@ -512,14 +539,35 @@ topicsToVote model remoteTopics toolbar =
                     (List.map
                         (\topic ->
                             li
-                                [ css [ Css.listStyle Css.none ]
-                                ]
+                                []
                                 [ topicCard model topic ]
                         )
                         topics
                     )
                 ]
         )
+
+
+listUnstyle : Css.Style
+listUnstyle =
+    Css.batch
+        [ Css.padding zero
+        , Css.margin zero
+        , Css.listStyle Css.none
+        ]
+
+
+listItemSpacing : Css.Style
+listItemSpacing =
+    Global.children
+        [ Global.everything
+            [ Global.adjacentSiblings
+                [ Global.everything
+                    [ Css.marginTop (rem 1)
+                    ]
+                ]
+            ]
+        ]
 
 
 borderRadius : Css.Style
