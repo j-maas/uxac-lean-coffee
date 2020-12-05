@@ -717,7 +717,7 @@ topicToDiscussCard creds entry =
                 []
 
         maybeDeleteButton =
-            if mayMod then
+            if creds.isAdmin then
                 [ deleteButton entry.topic.id
                 ]
 
