@@ -92,15 +92,11 @@ function subscribeToDoc(path, tag) {
 
 // Set up ports so that we can add and delete docs from Elm.
 
-const discussion_collection_path = "test_discussion"
-const topic_collection_path = "test_topics"
-const votes_collection_path = "test_votes"
-
 app.ports.insertDoc_.subscribe(info => {
   console.log(`Adding doc at ${info.path}:\n`, info.doc);
 
   db.collection(info.path)
-    .add(info.data)
+    .add(info.doc)
     .catch(sendErrorToElm);
 });
 
@@ -108,7 +104,7 @@ app.ports.setDoc_.subscribe(info => {
   console.log(`Setting the doc at ${info.path}:\n`, info.doc);
 
   db.doc(info.path)
-    .set(info.data)
+    .set(info.doc)
     .catch(sendErrorToElm);
 })
 

@@ -32,8 +32,9 @@ main =
 
 
 type alias Model =
-    { discussed : Maybe TopicId
+    { inDiscussion : Maybe TopicId
     , topics : Remote TopicList
+    , discussed : List TopicId
     , votes : Remote Votes
     , newTopicInput : String
     , user : Remote User
@@ -87,8 +88,9 @@ type alias Flags =
 
 init : Flags -> ( Model, Cmd Msg )
 init flags =
-    ( { discussed = Nothing
+    ( { inDiscussion = Nothing
       , topics = Loading
+      , discussed = []
       , votes = Loading
       , newTopicInput = ""
       , user = Loading
@@ -109,10 +111,13 @@ type Msg
     | DecodeError Decode.Error
     | TopicsReceived (List Topic)
     | VotesReceived Votes
-    | DiscussedTopicReceived (Maybe TopicId)
+    | TopicInDiscussionReceived (Maybe TopicId)
+    | DiscussedTopicsReceived (List TopicId)
     | SaveTopic User
     | DeleteTopic TopicId
     | Discuss TopicId
+    | FinishDiscussionClicked
+    | VoteAgainClicked
     | SortTopics
     | Upvote User Topic
     | RemoveUpvote User Topic
@@ -161,8 +166,11 @@ update msg model =
             in
             ( newModel, Cmd.none )
 
-        DiscussedTopicReceived topic ->
-            ( { model | discussed = topic }, Cmd.none )
+        TopicInDiscussionReceived topic ->
+            ( { model | inDiscussion = topic }, Cmd.none )
+
+        DiscussedTopicsReceived discussed ->
+            ( { model | discussed = discussed }, Cmd.none )
 
         ErrorReceived result ->
             case result of
@@ -181,7 +189,27 @@ update msg model =
             ( model, deleteTopic id model.votes )
 
         Discuss topicId ->
-            ( model, submitDiscussedTopic topicId )
+            ( model, submitTopicInDiscussion topicId )
+
+        FinishDiscussionClicked ->
+            case model.inDiscussion of
+                Just inDiscussion ->
+                    ( model, finishDiscussion inDiscussion )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        VoteAgainClicked ->
+            case model.inDiscussion of
+                Just inDiscussion ->
+                    ( { model
+                        | discussed = inDiscussion :: model.discussed
+                      }
+                    , removeTopicInDiscussion
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
 
         SortTopics ->
             ( { model | topics = Remote.map (TopicList.sort voteCountMap) model.topics }, Cmd.none )
@@ -223,7 +251,7 @@ submitTopic : TimestampField -> TopicSubmission -> Cmd msg
 submitTopic timestampField submission =
     insertDoc
         { collectionPath = topicCollectionPath
-        , data =
+        , doc =
             topicEncoder
                 submission
                 timestampField
@@ -253,7 +281,7 @@ submitVote : Vote -> Cmd msg
 submitVote vote =
     setDoc
         { docPath = votePath vote
-        , data =
+        , doc =
             voteEncoder vote
         }
 
@@ -268,12 +296,28 @@ retractVote vote =
     deleteDocs [ votePath vote ]
 
 
-submitDiscussedTopic : TopicId -> Cmd msg
-submitDiscussedTopic topicId =
+submitTopicInDiscussion : TopicId -> Cmd msg
+submitTopicInDiscussion topicId =
     setDoc
-        { docPath = discussedDocPath
-        , data = discussedTopicEncoder topicId
+        { docPath = inDiscussionDocPath
+        , doc = topicIdEncoder topicId
         }
+
+
+finishDiscussion : TopicId -> Cmd msg
+finishDiscussion topicId =
+    Cmd.batch
+        [ deleteDocs [ inDiscussionDocPath ]
+        , insertDoc
+            { collectionPath = discussedCollectionPath
+            , doc = topicIdEncoder topicId
+            }
+        ]
+
+
+removeTopicInDiscussion : Cmd msg
+removeTopicInDiscussion =
+    deleteDocs [ inDiscussionDocPath ]
 
 
 
@@ -295,7 +339,7 @@ view model =
                         ""
                    )
 
-        ( discussedTopic, topicList ) =
+        ( inDiscussion, topicList, discussedList ) =
             processTopics model
     in
     div
@@ -308,12 +352,14 @@ view model =
             [ css
                 [ limitWidth
                 , Css.marginBottom (rem 1)
+                , listItemSpacing
                 ]
             ]
             ([ h1 [] [ text heading ] ]
                 ++ errorView model.error
-                ++ [ discussionView model discussedTopic ]
-                ++ [ div [ css [ Css.marginTop (rem 1) ] ] [ topicEntry model.user model.newTopicInput ] ]
+                ++ [ discussionView model inDiscussion ]
+                ++ [ discussedTopics model (Debug.log "discussed" discussedList) ]
+                ++ [ topicEntry model.user model.newTopicInput ]
             )
         , topicsToVote model topicList (sortBarView model.votes model.topics)
         ]
@@ -336,19 +382,20 @@ type alias TopicWithVotes =
 
 processTopics :
     { a
-        | discussed : Maybe TopicId
+        | inDiscussion : Maybe TopicId
         , topics : Remote TopicList
+        , discussed : List TopicId
         , votes : Remote Votes
     }
-    -> ( Maybe TopicWithVotes, Remote (List TopicWithVotes) )
+    -> ( Maybe TopicWithVotes, Remote (List TopicWithVotes), List TopicWithVotes )
 processTopics model =
     case model.topics of
         Loading ->
-            ( Nothing, Loading )
+            ( Nothing, Loading, [] )
 
         Got topics ->
             let
-                topicsInVoting =
+                topicsWithVotes =
                     Maybe.map
                         (\votes ->
                             TopicList.toList topics
@@ -363,14 +410,16 @@ processTopics model =
                         )
                         (Remote.toMaybe model.votes)
                         |> Maybe.withDefault []
+
+                ( maybeInDiscussion, remainingTopics ) =
+                    Maybe.map (\topicId -> extract (\entry -> entry.topic.id == topicId) topicsWithVotes)
+                        model.inDiscussion
+                        |> Maybe.withDefault ( Nothing, topicsWithVotes )
+
+                ( discussed, toVote ) =
+                    List.partition (\t -> List.member t.topic.id model.discussed) remainingTopics
             in
-            model.discussed
-                |> Maybe.map
-                    (\topicId ->
-                        extract (\entry -> entry.topic.id == topicId) topicsInVoting
-                            |> Tuple.mapSecond Got
-                    )
-                |> Maybe.withDefault ( Nothing, Got topicsInVoting )
+            ( maybeInDiscussion, Got toVote, discussed )
 
 
 extract : (a -> Bool) -> List a -> ( Maybe a, List a )
@@ -396,7 +445,7 @@ errorView maybeError =
             []
 
 
-discussionView : TopicViewModel a -> Maybe TopicWithVotes -> Html Msg
+discussionView : Credentials a -> Maybe TopicWithVotes -> Html Msg
 discussionView model maybeDiscussedTopic =
     div
         [ css
@@ -409,7 +458,7 @@ discussionView model maybeDiscussedTopic =
          ]
             ++ (case maybeDiscussedTopic of
                     Just topic ->
-                        [ topicCard model topic
+                        [ topicToDiscussCard model topic
                         ]
 
                     Nothing ->
@@ -432,6 +481,34 @@ backgroundColor =
     Css.backgroundColor (Css.hsl primaryHue 0.2 0.95)
 
 
+discussedTopics : Credentials a -> List TopicWithVotes -> Html Msg
+discussedTopics model topics =
+    Html.details
+        [ css
+            [ containerPadding
+            , backgroundColor
+            , borderRadius
+            ]
+        ]
+        [ Html.summary [] [ text "Discussed topics" ]
+        , ol
+            [ css
+                [ listUnstyle
+                , listItemSpacing
+                , Css.marginTop (rem 1)
+                ]
+            ]
+            (List.map
+                (\topic ->
+                    li []
+                        [ finishedTopicCard model topic
+                        ]
+                )
+                topics
+            )
+        ]
+
+
 topicEntry : Remote User -> String -> Html Msg
 topicEntry user newTopicInput =
     div
@@ -444,7 +521,7 @@ topicEntry user newTopicInput =
         [ submitForm user newTopicInput ]
 
 
-topicsToVote : TopicViewModel a -> Remote (List TopicWithVotes) -> Html Msg -> Html Msg
+topicsToVote : Credentials a -> Remote (List TopicWithVotes) -> Html Msg -> Html Msg
 topicsToVote model remoteTopics toolbar =
     div
         [ css
@@ -473,7 +550,7 @@ topicsToVote model remoteTopics toolbar =
                             , Css.marginRight (rem 1)
                             ]
                         ]
-                        [ text "All topics" ]
+                        [ text "Suggested topics" ]
                     , toolbar
                     ]
                 , let
@@ -482,20 +559,11 @@ topicsToVote model remoteTopics toolbar =
                   in
                   ol
                     [ css
-                        [ Css.padding zero
-                        , Css.margin zero
+                        [ listUnstyle
                         , Css.displayFlex
                         , Css.flexDirection Css.column
                         , Media.withMedia [ Media.all [ Media.maxWidth breakpoint ] ]
-                            [ Global.children
-                                [ Global.everything
-                                    [ Global.adjacentSiblings
-                                        [ Global.everything
-                                            [ Css.marginTop (rem 1)
-                                            ]
-                                        ]
-                                    ]
-                                ]
+                            [ listItemSpacing
                             ]
                         , Media.withMedia [ Media.all [ Media.minWidth breakpoint ] ]
                             [ Css.property
@@ -512,14 +580,35 @@ topicsToVote model remoteTopics toolbar =
                     (List.map
                         (\topic ->
                             li
-                                [ css [ Css.listStyle Css.none ]
-                                ]
-                                [ topicCard model topic ]
+                                []
+                                [ topicToVoteCard model topic ]
                         )
                         topics
                     )
                 ]
         )
+
+
+listUnstyle : Css.Style
+listUnstyle =
+    Css.batch
+        [ Css.padding zero
+        , Css.margin zero
+        , Css.listStyle Css.none
+        ]
+
+
+listItemSpacing : Css.Style
+listItemSpacing =
+    Global.children
+        [ Global.everything
+            [ Global.adjacentSiblings
+                [ Global.everything
+                    [ Css.marginTop (rem 1)
+                    ]
+                ]
+            ]
+        ]
 
 
 borderRadius : Css.Style
@@ -590,89 +679,194 @@ sortButton =
     button [ css [ buttonStyle ], onClick SortTopics ] [ text "Sort" ]
 
 
-type alias TopicViewModel a =
+type alias Credentials a =
     { a | user : Remote User, isAdmin : Bool }
 
 
-topicCard : TopicViewModel a -> TopicWithVotes -> Html Msg
-topicCard model entry =
+topicToDiscussCard : Credentials a -> TopicWithVotes -> Html Msg
+topicToDiscussCard creds entry =
     let
-        maybeVoteButton =
-            case model.user of
-                Got user ->
-                    let
-                        voteCount =
-                            entry.votes
-                                |> List.length
+        voteCount =
+            List.length entry.votes
 
-                        userAlreadyVoted =
-                            List.any (\userId -> userId == user.id) entry.votes
+        mayMod =
+            mayModify creds entry.topic.creator
 
-                        state =
-                            if userAlreadyVoted then
-                                { action = RemoveUpvote
-                                , saturation = 1
-                                , lightness = 0.6
-                                , border = Css.borderWidth (px 2)
-                                , margin = px 0
-                                }
-
-                            else
-                                { action = Upvote
-                                , saturation = 0.4
-                                , lightness = 0.9
-                                , border = Css.batch []
-                                , margin = px 1
-                                }
-                    in
-                    [ button
-                        [ onClick (state.action user entry.topic)
-                        , css
-                            [ buttonStyle
-                            , Css.backgroundColor (Css.hsl primaryHue state.saturation state.lightness)
-                            , state.border
-                            , Css.margin state.margin
-                            ]
-                        ]
-                        [ text
-                            ("👍 " ++ String.fromInt voteCount)
-                        ]
+        maybeVoteAgainButton =
+            if creds.isAdmin then
+                [ button
+                    [ css [ buttonStyle ]
+                    , onClick VoteAgainClicked
                     ]
-
-                _ ->
-                    []
-
-        mayModify =
-            if model.isAdmin then
-                True
+                    [ text "Vote again" ]
+                ]
 
             else
-                case model.user of
-                    Loading ->
-                        False
+                []
 
-                    Got user ->
-                        user.id == entry.topic.userId
-
-        maybeDiscussButton =
-            if model.isAdmin then
-                [ button [ onClick (Discuss entry.topic.id), css [ buttonStyle ] ] [ text "Discuss" ] ]
+        maybeFinishButton =
+            if creds.isAdmin then
+                [ button
+                    [ css [ buttonStyle ]
+                    , onClick FinishDiscussionClicked
+                    ]
+                    [ text "Finish" ]
+                ]
 
             else
                 []
 
         maybeDeleteButton =
-            if mayModify then
-                [ button
-                    [ onClick (DeleteTopic entry.topic.id)
-                    , css [ buttonStyle ]
-                    ]
-                    [ text "Delete" ]
+            if creds.isAdmin then
+                [ deleteButton entry.topic.id
                 ]
 
             else
                 []
     in
+    topicCard
+        ([ votesIndicator voteCount ]
+            ++ maybeFinishButton
+            ++ maybeVoteAgainButton
+            ++ maybeDeleteButton
+        )
+        entry.topic.topic
+
+
+topicToVoteCard : Credentials a -> TopicWithVotes -> Html Msg
+topicToVoteCard creds entry =
+    let
+        maybeDiscussButton =
+            if creds.isAdmin then
+                [ button [ onClick (Discuss entry.topic.id), css [ buttonStyle ] ] [ text "Discuss" ] ]
+
+            else
+                []
+
+        mayMod =
+            mayModify creds entry.topic.creator
+
+        maybeDeleteButton =
+            if mayMod then
+                [ deleteButton entry.topic.id ]
+
+            else
+                []
+    in
+    topicCard
+        (maybeVoteButton creds.user entry
+            ++ maybeDiscussButton
+            ++ maybeDeleteButton
+        )
+        entry.topic.topic
+
+
+finishedTopicCard : Credentials a -> TopicWithVotes -> Html Msg
+finishedTopicCard creds entry =
+    let
+        voteCount =
+            List.length entry.votes
+
+        mayMod =
+            mayModify creds entry.topic.creator
+
+        maybeDeleteButton =
+            if mayMod then
+                [ deleteButton entry.topic.id ]
+
+            else
+                []
+    in
+    topicCard
+        ([ votesIndicator voteCount ]
+            ++ maybeDeleteButton
+        )
+        entry.topic.topic
+
+
+maybeVoteButton : Remote User -> TopicWithVotes -> List (Html Msg)
+maybeVoteButton remoteUser entry =
+    case remoteUser of
+        Got user ->
+            let
+                voteCount =
+                    entry.votes
+                        |> List.length
+
+                userAlreadyVoted =
+                    List.any (\userId -> userId == user.id) entry.votes
+
+                state =
+                    if userAlreadyVoted then
+                        { action = RemoveUpvote
+                        , saturation = 1
+                        , lightness = 0.6
+                        , border = Css.borderWidth (px 2)
+                        , margin = px 0
+                        }
+
+                    else
+                        { action = Upvote
+                        , saturation = 0.4
+                        , lightness = 0.9
+                        , border = Css.batch []
+                        , margin = px 1
+                        }
+            in
+            [ button
+                [ onClick (state.action user entry.topic)
+                , css
+                    [ buttonStyle
+                    , Css.backgroundColor (Css.hsl primaryHue state.saturation state.lightness)
+                    , state.border
+                    , Css.margin state.margin
+                    ]
+                ]
+                [ votesText voteCount ]
+            ]
+
+        _ ->
+            []
+
+
+votesIndicator : Int -> Html Msg
+votesIndicator count =
+    div [ css [ smallBorderRadius, backgroundColor, buttonPadding ] ]
+        [ votesText count
+        ]
+
+
+votesText : Int -> Html Msg
+votesText count =
+    text
+        ("👍 " ++ String.fromInt count)
+
+
+deleteButton : TopicId -> Html Msg
+deleteButton topicId =
+    button
+        [ onClick (DeleteTopic topicId)
+        , css [ buttonStyle ]
+        ]
+        [ text "Delete" ]
+
+
+mayModify : Credentials a -> UserId -> Bool
+mayModify creds creator =
+    if creds.isAdmin then
+        True
+
+    else
+        case creds.user of
+            Loading ->
+                False
+
+            Got user ->
+                user.id == creator
+
+
+topicCard : List (Html Msg) -> String -> Html Msg
+topicCard buttons topic =
     card
         [ div
             [ css
@@ -680,7 +874,7 @@ topicCard model entry =
                 , Css.flexDirection Css.column
                 ]
             ]
-            [ text entry.topic.topic
+            [ text topic
             , div
                 [ css
                     [ Css.marginTop (rem 1)
@@ -690,10 +884,7 @@ topicCard model entry =
                     , Css.justifyContent Css.spaceBetween
                     ]
                 ]
-                (maybeVoteButton
-                    ++ maybeDiscussButton
-                    ++ maybeDeleteButton
-                )
+                buttons
             ]
         ]
 
@@ -754,7 +945,7 @@ card content =
 buttonStyle : Css.Style
 buttonStyle =
     Css.batch
-        [ Css.padding2 (rem 0.3) (rem 0.5)
+        [ buttonPadding
         , Css.border3 (px 1) Css.solid (Css.hsl 0 0 0)
         , smallBorderRadius
         , Css.backgroundColor (Css.hsl 0 0 1)
@@ -763,6 +954,11 @@ buttonStyle =
             [ Css.property "filter" "brightness(90%)"
             ]
         ]
+
+
+buttonPadding : Css.Style
+buttonPadding =
+    Css.padding2 (rem 0.3) (rem 0.5)
 
 
 primaryHue : Float
@@ -797,9 +993,14 @@ voteCollectionPath =
     [ "votes" ]
 
 
-discussedDocPath : Path
-discussedDocPath =
-    [ "discussion", "discussed" ]
+inDiscussionDocPath : Path
+inDiscussionDocPath =
+    [ "inDiscussion", "topic" ]
+
+
+discussedCollectionPath : Path
+discussedCollectionPath =
+    [ "discussed" ]
 
 
 firestoreSubscriptionsCmd : Cmd Msg
@@ -807,7 +1008,8 @@ firestoreSubscriptionsCmd =
     Cmd.batch
         [ subscribe { kind = Collection, path = topicCollectionPath, tag = TopicsTag }
         , subscribe { kind = Collection, path = voteCollectionPath, tag = VotesTag }
-        , subscribe { kind = Doc, path = discussedDocPath, tag = DiscussedTag }
+        , subscribe { kind = Doc, path = inDiscussionDocPath, tag = InDiscussionTag }
+        , subscribe { kind = Collection, path = discussedCollectionPath, tag = DiscussedTag }
         ]
 
 
@@ -885,6 +1087,7 @@ encodePath path =
 type SubscriptionTag
     = TopicsTag
     | VotesTag
+    | InDiscussionTag
     | DiscussedTag
 
 
@@ -898,6 +1101,9 @@ encodeSubscriptionTag tag =
 
                 VotesTag ->
                     "votes"
+
+                InDiscussionTag ->
+                    "inDiscussion"
 
                 DiscussedTag ->
                     "discussed"
@@ -916,6 +1122,9 @@ subscriptionTagDecoder =
 
                     "votes" ->
                         Decode.succeed VotesTag
+
+                    "inDiscussion" ->
+                        Decode.succeed InDiscussionTag
 
                     "discussed" ->
                         Decode.succeed DiscussedTag
@@ -953,9 +1162,13 @@ parseFirestoreSubscription value =
                                             votesDecoder
                                                 |> Decode.map VotesReceived
 
+                                        InDiscussionTag ->
+                                            inDiscussionDecoder
+                                                |> Decode.map TopicInDiscussionReceived
+
                                         DiscussedTag ->
-                                            discussedTopicDecoder
-                                                |> Decode.map DiscussedTopicReceived
+                                            discussedDecoder
+                                                |> Decode.map DiscussedTopicsReceived
                             in
                             Decode.field "data" dataDecoder
                         )
@@ -971,14 +1184,14 @@ parseFirestoreSubscription value =
 
 
 type alias InsertDocInfo =
-    { collectionPath : Path, data : Encode.Value }
+    { collectionPath : Path, doc : Encode.Value }
 
 
 insertDoc : InsertDocInfo -> Cmd msg
 insertDoc info =
     Encode.object
         [ ( "path", encodePath info.collectionPath )
-        , ( "data", info.data )
+        , ( "doc", info.doc )
         ]
         |> insertDoc_
 
@@ -987,14 +1200,14 @@ port insertDoc_ : Encode.Value -> Cmd msg
 
 
 type alias SetDocInfo =
-    { docPath : Path, data : Encode.Value }
+    { docPath : Path, doc : Encode.Value }
 
 
 setDoc : SetDocInfo -> Cmd msg
 setDoc info =
     Encode.object
         [ ( "path", encodePath info.docPath )
-        , ( "data", info.data )
+        , ( "doc", info.doc )
         ]
         |> setDoc_
 
@@ -1030,7 +1243,7 @@ topicsDecoder =
             (\id topic userId createdAt ->
                 { id = id
                 , topic = topic
-                , userId = userId
+                , creator = userId
                 , createdAt = createdAt
                 }
             )
@@ -1044,10 +1257,6 @@ topicsDecoder =
 dataField : String -> Decoder a -> Decoder a
 dataField field decoder =
     Decode.field "data" (Decode.field field decoder)
-
-
-
--- old ports
 
 
 userDecoder : Decoder User
@@ -1102,9 +1311,14 @@ votesDecoder =
             )
 
 
-discussedTopicDecoder : Decoder (Maybe TopicId)
-discussedTopicDecoder =
+inDiscussionDecoder : Decoder (Maybe TopicId)
+inDiscussionDecoder =
     Decode.maybe (Decode.field "topicId" Decode.string)
+
+
+discussedDecoder : Decoder (List TopicId)
+discussedDecoder =
+    Decode.list (dataField "topicId" Decode.string)
 
 
 errorDecoder : Decoder Error
@@ -1138,8 +1352,8 @@ voteEncoder vote =
         ]
 
 
-discussedTopicEncoder : TopicId -> Encode.Value
-discussedTopicEncoder topicId =
+topicIdEncoder : TopicId -> Encode.Value
+topicIdEncoder topicId =
     Encode.object
         [ ( "topicId", Encode.string topicId )
         ]
