@@ -36,6 +36,7 @@ type alias Model =
     , topics : Remote TopicList
     , discussed : List TopicId
     , votes : Remote Votes
+    , continuationVotes : List ContinuationVote
     , newTopicInput : String
     , user : Remote User
     , isAdmin : Bool
@@ -60,6 +61,18 @@ type alias Vote =
 voteFrom : User -> Topic -> Vote
 voteFrom user topic =
     { userId = user.id, topicId = topic.id }
+
+
+type alias ContinuationVote =
+    { userId : UserId
+    , vote : Continuation
+    }
+
+
+type Continuation
+    = MoveOn
+    | Stay
+    | Abstain
 
 
 type alias User =
@@ -92,6 +105,7 @@ init flags =
       , topics = Loading
       , discussed = []
       , votes = Loading
+      , continuationVotes = []
       , newTopicInput = ""
       , user = Loading
       , isAdmin = flags.isAdmin
@@ -112,6 +126,7 @@ type Msg
     | TopicsReceived (List Topic)
     | VotesReceived Votes
     | TopicInDiscussionReceived (Maybe TopicId)
+    | ContinuationVotesReceived (List ContinuationVote)
     | DiscussedTopicsReceived (List TopicId)
     | SaveTopic User
     | DeleteTopic TopicId
@@ -121,6 +136,8 @@ type Msg
     | SortTopics
     | Upvote User Topic
     | RemoveUpvote User Topic
+    | ContinuationVoteSent ContinuationVote
+    | RemoveContinuationVote UserId
     | ErrorReceived (Result Decode.Error Error)
     | NewTopicInputChanged String
 
@@ -166,6 +183,9 @@ update msg model =
             in
             ( newModel, Cmd.none )
 
+        ContinuationVotesReceived continuationVotes ->
+            ( { model | continuationVotes = continuationVotes }, Cmd.none )
+
         TopicInDiscussionReceived topic ->
             ( { model | inDiscussion = topic }, Cmd.none )
 
@@ -194,7 +214,14 @@ update msg model =
         FinishDiscussionClicked ->
             case model.inDiscussion of
                 Just inDiscussion ->
-                    ( model, finishDiscussion inDiscussion )
+                    let
+                        cmds =
+                            Cmd.batch
+                                [ finishDiscussion inDiscussion
+                                , clearContinuationVotes model.continuationVotes
+                                ]
+                    in
+                    ( model, cmds )
 
                 Nothing ->
                     ( model, Cmd.none )
@@ -210,6 +237,12 @@ update msg model =
 
                 Nothing ->
                     ( model, Cmd.none )
+
+        ContinuationVoteSent vote ->
+            ( model, submitContinuationVote vote )
+
+        RemoveContinuationVote userId ->
+            ( model, retractContinuationVote userId )
 
         SortTopics ->
             ( { model | topics = Remote.map (TopicList.sort voteCountMap) model.topics }, Cmd.none )
@@ -265,14 +298,14 @@ deleteTopic topicId votes =
             topicCollectionPath ++ [ topicId ]
 
         {- We delete all associated votes as well.
-           TODO: This smells like there might be a race condition when others add votes when we delete them. Investigate whether we can delete the associated votes on the server side through functions.
+           TODO: This smells like there might be a race condition when others add votes when we delete them. Instead, use batches. See https://github.com/Y0hy0h/uxac-lean-coffee/issues/37.
         -}
         votePaths =
             Remote.toMaybe votes
                 |> Maybe.withDefault Dict.empty
                 |> Dict.get topicId
                 |> Maybe.withDefault []
-                |> List.map (\userId -> votePath { userId = userId, topicId = topicId })
+                |> List.map (\userId -> topicVotePath { userId = userId, topicId = topicId })
     in
     deleteDocs (topicPath :: votePaths)
 
@@ -280,20 +313,51 @@ deleteTopic topicId votes =
 submitVote : Vote -> Cmd msg
 submitVote vote =
     setDoc
-        { docPath = votePath vote
+        { docPath = topicVotePath vote
         , doc =
-            voteEncoder vote
+            topicVoteEncoder vote
         }
 
 
-votePath : Vote -> Path
-votePath ids =
+topicVotePath : Vote -> Path
+topicVotePath ids =
     voteCollectionPath ++ [ ids.userId ++ ":" ++ ids.topicId ]
 
 
 retractVote : Vote -> Cmd msg
 retractVote vote =
-    deleteDocs [ votePath vote ]
+    deleteDocs [ topicVotePath vote ]
+
+
+submitContinuationVote : ContinuationVote -> Cmd msg
+submitContinuationVote vote =
+    setDoc
+        { docPath = continuationVotePath vote.userId
+        , doc = continuationVoteEncoder vote
+        }
+
+
+retractContinuationVote : UserId -> Cmd msg
+retractContinuationVote userId =
+    deleteDocs
+        [ continuationVotePath userId
+        ]
+
+
+clearContinuationVotes : List ContinuationVote -> Cmd msg
+clearContinuationVotes votes =
+    deleteDocs
+        (List.map
+            (\vote ->
+                continuationVotePath vote.userId
+            )
+            votes
+        )
+
+
+continuationVotePath : UserId -> Path
+continuationVotePath userId =
+    continuationVoteCollectionPath ++ [ userId ]
 
 
 submitTopicInDiscussion : TopicId -> Cmd msg
@@ -357,7 +421,7 @@ view model =
             ]
             ([ h1 [] [ text heading ] ]
                 ++ errorView model.error
-                ++ [ discussionView model inDiscussion ]
+                ++ [ discussionView model inDiscussion model.continuationVotes ]
                 ++ [ discussedTopics model discussedList ]
                 ++ [ topicEntry model.user model.newTopicInput ]
             )
@@ -445,20 +509,21 @@ errorView maybeError =
             []
 
 
-discussionView : Credentials a -> Maybe TopicWithVotes -> Html Msg
-discussionView model maybeDiscussedTopic =
+discussionView : Credentials a -> Maybe TopicWithVotes -> List ContinuationVote -> Html Msg
+discussionView creds maybeDiscussedTopic continuationVotes =
     div
         [ css
             [ borderRadius
             , Css.padding (rem 1)
             , Css.backgroundColor (Css.hsl primaryHue 1 0.5)
+            , listItemSpacing
             ]
         ]
-        ([ h2 [ css [ Css.margin zero, Css.marginBottom (rem 1) ] ] [ text "In discussion" ]
+        ([ h2 [ css [ Css.margin zero ] ] [ text "In discussion" ]
          ]
             ++ (case maybeDiscussedTopic of
                     Just topic ->
-                        [ topicToDiscussCard model topic
+                        [ topicToDiscussCard creds topic
                         ]
 
                     Nothing ->
@@ -466,13 +531,15 @@ discussionView model maybeDiscussedTopic =
                             [ css [ Css.opacity (num 0.5) ]
                             ]
                             [ card
-                                [ div [ css [ Css.width (pct 100), Css.height (rem 5) ] ]
+                                [ div [ css [ Css.width (pct 100), Css.minHeight (rem 5) ] ]
                                     [ text "Currently there is no topic in discussion. Vote for one below."
                                     ]
                                 ]
                             ]
                         ]
                )
+            ++ [ continuationVote creds.user continuationVotes
+               ]
         )
 
 
@@ -507,6 +574,57 @@ discussedTopics model topics =
                 topics
             )
         ]
+
+
+continuationVote : Remote User -> List ContinuationVote -> Html Msg
+continuationVote remoteUser continuationVotes =
+    div []
+        (case remoteUser of
+            Loading ->
+                []
+
+            Got user ->
+                let
+                    ( moveOnVotes, remainingVotes ) =
+                        List.partition (\vote -> vote.vote == MoveOn) continuationVotes
+
+                    ( stayVotes, abstainVotes ) =
+                        List.partition (\vote -> vote.vote == Stay) remainingVotes
+
+                    stayButton =
+                        voteButton user
+                            (List.map .userId stayVotes)
+                            { upvote = ContinuationVoteSent { userId = user.id, vote = Stay }
+                            , downvote = RemoveContinuationVote user.id
+                            }
+                            (\count -> text <| "Stay (" ++ String.fromInt count ++ ")")
+
+                    abstainButton =
+                        voteButton user
+                            (List.map .userId abstainVotes)
+                            { upvote = ContinuationVoteSent { userId = user.id, vote = Abstain }
+                            , downvote = RemoveContinuationVote user.id
+                            }
+                            (\count -> text <| "Abstain (" ++ String.fromInt count ++ ")")
+
+                    moveOnButton =
+                        voteButton user
+                            (List.map .userId moveOnVotes)
+                            { upvote = ContinuationVoteSent { userId = user.id, vote = MoveOn }
+                            , downvote = RemoveContinuationVote user.id
+                            }
+                            (\count -> text <| "Move on (" ++ String.fromInt count ++ ")")
+                in
+                [ div
+                    [ css
+                        [ Css.displayFlex
+                        , Css.flexDirection Css.row
+                        , Css.justifyContent Css.spaceBetween
+                        ]
+                    ]
+                    [ stayButton, abstainButton, moveOnButton ]
+                ]
+        )
 
 
 topicEntry : Remote User -> String -> Html Msg
@@ -754,7 +872,7 @@ topicToVoteCard creds entry =
                 []
     in
     topicCard
-        (maybeVoteButton creds.user entry
+        (maybeTopicVoteButton creds.user entry
             ++ maybeDiscussButton
             ++ maybeDeleteButton
         )
@@ -784,49 +902,63 @@ finishedTopicCard creds entry =
         entry.topic.topic
 
 
-maybeVoteButton : Remote User -> TopicWithVotes -> List (Html Msg)
-maybeVoteButton remoteUser entry =
+maybeTopicVoteButton : Remote User -> TopicWithVotes -> List (Html Msg)
+maybeTopicVoteButton remoteUser entry =
     case remoteUser of
+        Loading ->
+            []
+
         Got user ->
             let
-                voteCount =
-                    entry.votes
-                        |> List.length
+                upvoteMsg =
+                    Upvote user entry.topic
 
-                userAlreadyVoted =
-                    List.any (\userId -> userId == user.id) entry.votes
-
-                state =
-                    if userAlreadyVoted then
-                        { action = RemoveUpvote
-                        , saturation = 1
-                        , lightness = 0.6
-                        , border = Css.borderWidth (px 2)
-                        , margin = px 0
-                        }
-
-                    else
-                        { action = Upvote
-                        , saturation = 0.4
-                        , lightness = 0.9
-                        , border = Css.batch []
-                        , margin = px 1
-                        }
+                downvoteMsg =
+                    RemoveUpvote user entry.topic
             in
-            [ button
-                [ onClick (state.action user entry.topic)
-                , css
-                    [ buttonStyle
-                    , Css.backgroundColor (Css.hsl primaryHue state.saturation state.lightness)
-                    , state.border
-                    , Css.margin state.margin
-                    ]
-                ]
-                [ votesText voteCount ]
+            [ voteButton user
+                entry.votes
+                { upvote = upvoteMsg, downvote = downvoteMsg }
+                votesText
             ]
 
-        _ ->
-            []
+
+voteButton : User -> List UserId -> { upvote : Msg, downvote : Msg } -> (Int -> Html Msg) -> Html Msg
+voteButton user votes msgs content =
+    let
+        voteCount =
+            List.length votes
+
+        userAlreadyVoted =
+            List.any (\userId -> userId == user.id) votes
+
+        state =
+            if userAlreadyVoted then
+                { action = msgs.downvote
+                , saturation = 1
+                , lightness = 0.6
+                , border = Css.borderWidth (px 2)
+                , margin = px 0
+                }
+
+            else
+                { action = msgs.upvote
+                , saturation = 0.4
+                , lightness = 0.9
+                , border = Css.batch []
+                , margin = px 1
+                }
+    in
+    button
+        [ onClick state.action
+        , css
+            [ buttonStyle
+            , Css.backgroundColor (Css.hsl primaryHue state.saturation state.lightness)
+            , state.border
+            , Css.margin state.margin
+            ]
+        ]
+        [ content voteCount ]
 
 
 votesIndicator : Int -> Html Msg
@@ -998,6 +1130,11 @@ inDiscussionDocPath =
     [ "inDiscussion", "topic" ]
 
 
+continuationVoteCollectionPath : Path
+continuationVoteCollectionPath =
+    [ "continuationVotes" ]
+
+
 discussedCollectionPath : Path
 discussedCollectionPath =
     [ "discussed" ]
@@ -1009,6 +1146,7 @@ firestoreSubscriptionsCmd =
         [ subscribe { kind = Collection, path = topicCollectionPath, tag = TopicsTag }
         , subscribe { kind = Collection, path = voteCollectionPath, tag = VotesTag }
         , subscribe { kind = Doc, path = inDiscussionDocPath, tag = InDiscussionTag }
+        , subscribe { kind = Collection, path = continuationVoteCollectionPath, tag = ContinuationVotesTag }
         , subscribe { kind = Collection, path = discussedCollectionPath, tag = DiscussedTag }
         ]
 
@@ -1088,6 +1226,7 @@ type SubscriptionTag
     = TopicsTag
     | VotesTag
     | InDiscussionTag
+    | ContinuationVotesTag
     | DiscussedTag
 
 
@@ -1104,6 +1243,9 @@ encodeSubscriptionTag tag =
 
                 InDiscussionTag ->
                     "inDiscussion"
+
+                ContinuationVotesTag ->
+                    "continuationVotes"
 
                 DiscussedTag ->
                     "discussed"
@@ -1125,6 +1267,9 @@ subscriptionTagDecoder =
 
                     "inDiscussion" ->
                         Decode.succeed InDiscussionTag
+
+                    "continuationVotes" ->
+                        Decode.succeed ContinuationVotesTag
 
                     "discussed" ->
                         Decode.succeed DiscussedTag
@@ -1165,6 +1310,10 @@ parseFirestoreSubscription value =
                                         InDiscussionTag ->
                                             inDiscussionDecoder
                                                 |> Decode.map TopicInDiscussionReceived
+
+                                        ContinuationVotesTag ->
+                                            continuationVotesDecoder
+                                                |> Decode.map ContinuationVotesReceived
 
                                         DiscussedTag ->
                                             discussedDecoder
@@ -1316,6 +1465,20 @@ inDiscussionDecoder =
     Decode.maybe (Decode.field "topicId" Decode.string)
 
 
+continuationVotesDecoder : Decoder (List ContinuationVote)
+continuationVotesDecoder =
+    Decode.list
+        (Decode.map2
+            (\userId vote ->
+                { userId = userId
+                , vote = vote
+                }
+            )
+            (dataField "userId" Decode.string)
+            (dataField "vote" continuationDecoder)
+        )
+
+
 discussedDecoder : Decoder (List TopicId)
 discussedDecoder =
     Decode.list (dataField "topicId" Decode.string)
@@ -1344,8 +1507,8 @@ topicEncoder { topic, userId } timestampField =
         ]
 
 
-voteEncoder : Vote -> Encode.Value
-voteEncoder vote =
+topicVoteEncoder : Vote -> Encode.Value
+topicVoteEncoder vote =
     Encode.object
         [ ( "userId", Encode.string vote.userId )
         , ( "topicId", Encode.string vote.topicId )
@@ -1357,3 +1520,48 @@ topicIdEncoder topicId =
     Encode.object
         [ ( "topicId", Encode.string topicId )
         ]
+
+
+continuationVoteEncoder : ContinuationVote -> Encode.Value
+continuationVoteEncoder vote =
+    Encode.object
+        [ ( "userId", Encode.string vote.userId )
+        , ( "vote", encodeContinuation vote.vote )
+        ]
+
+
+encodeContinuation : Continuation -> Encode.Value
+encodeContinuation continuation =
+    let
+        string =
+            case continuation of
+                MoveOn ->
+                    "moveOn"
+
+                Stay ->
+                    "stay"
+
+                Abstain ->
+                    "abstain"
+    in
+    Encode.string string
+
+
+continuationDecoder : Decoder Continuation
+continuationDecoder =
+    Decode.string
+        |> Decode.andThen
+            (\raw ->
+                case raw of
+                    "moveOn" ->
+                        Decode.succeed MoveOn
+
+                    "stay" ->
+                        Decode.succeed Stay
+
+                    "abstain" ->
+                        Decode.succeed Abstain
+
+                    _ ->
+                        Decode.fail "Invalid continuation vote"
+            )
