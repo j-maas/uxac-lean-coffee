@@ -635,18 +635,21 @@ remainingTimeDisplay times =
                             - Time.posixToMillis times.now
 
                     differenceMinutes =
-                        round (toFloat difference / (60 * 1000))
+                        floor (toFloat difference / (60 * 1000))
                             -- Cap at 0 to prevent negative times.
                             |> max 0
 
-                    pluralizedMinutes =
+                    message =
                         if differenceMinutes == 1 then
-                            "minute"
+                            "Less than 1 minute left…"
+
+                        else if differenceMinutes == 0 then
+                            "Time has run out. Do you want to stay with this topic or move on to the next?"
 
                         else
-                            "minutes"
+                            String.fromInt differenceMinutes ++ " minutes left…"
                 in
-                text (String.fromInt differenceMinutes ++ " " ++ pluralizedMinutes ++ " left…")
+                text message
         ]
 
 
