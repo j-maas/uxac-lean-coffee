@@ -635,6 +635,8 @@ remainingTimeDisplay times =
 
                     differenceMinutes =
                         round (toFloat difference / (60 * 1000))
+                            -- Cap at 0 to prevent negative times.
+                            |> max 0
 
                     pluralizedMinutes =
                         if differenceMinutes == 1 then
