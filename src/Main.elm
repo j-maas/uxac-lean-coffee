@@ -214,7 +214,14 @@ update msg model =
         FinishDiscussionClicked ->
             case model.inDiscussion of
                 Just inDiscussion ->
-                    ( model, finishDiscussion inDiscussion )
+                    let
+                        cmds =
+                            Cmd.batch
+                                [ finishDiscussion inDiscussion
+                                , clearContinuationVotes model.continuationVotes
+                                ]
+                    in
+                    ( model, cmds )
 
                 Nothing ->
                     ( model, Cmd.none )
@@ -335,6 +342,17 @@ retractContinuationVote userId =
     deleteDocs
         [ continuationVotePath userId
         ]
+
+
+clearContinuationVotes : List ContinuationVote -> Cmd msg
+clearContinuationVotes votes =
+    deleteDocs
+        (List.map
+            (\vote ->
+                continuationVotePath vote.userId
+            )
+            votes
+        )
 
 
 continuationVotePath : UserId -> Path
