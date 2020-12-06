@@ -40,7 +40,7 @@ type alias Model =
     , continuationVotes : List ContinuationVote
     , deadline : Maybe Time.Posix
     , now : Maybe Time.Posix
-    , timerInput : Int
+    , timerInput : String
     , newTopicInput : String
     , user : Remote User
     , isAdmin : Bool
@@ -135,7 +135,7 @@ init flags =
       , continuationVotes = []
       , deadline = Nothing
       , now = Nothing
-      , timerInput = 10
+      , timerInput = "10"
       , newTopicInput = ""
       , user = Loading
       , isAdmin = flags.isAdmin
@@ -301,23 +301,23 @@ update msg model =
         Tick now ->
             ( { model | now = Just now }, Cmd.none )
 
-        TimerInputChanged raw ->
-            case String.toInt raw of
-                Just newInput ->
-                    ( { model | timerInput = newInput |> atLeast 0 }, Cmd.none )
-
-                Nothing ->
-                    ( model, Cmd.none )
+        TimerInputChanged newInput ->
+            ( { model | timerInput = newInput }, Cmd.none )
 
         TimerStarted ->
-            case model.now of
-                Nothing ->
-                    ( model, Cmd.none )
-
-                Just now ->
+            let
+                maybeTimerInput =
+                    String.toInt model.timerInput
+            in
+            case ( model.now, maybeTimerInput ) of
+                ( Just now, Just timerInput ) ->
                     let
+                        sanitizedTimerInput =
+                            timerInput
+                                |> atLeast 0
+
                         timerInputInMilliseconds =
-                            model.timerInput * 1000 * 60
+                            sanitizedTimerInput * 1000 * 60
 
                         deadline =
                             Time.posixToMillis now
@@ -325,6 +325,9 @@ update msg model =
                                 |> Time.millisToPosix
                     in
                     ( model, submitDeadline model.workspace deadline )
+
+                _ ->
+                    ( model, Cmd.none )
 
         TimerCleared ->
             ( model, clearDeadline model.workspace )
@@ -650,7 +653,7 @@ discussionView :
     -> Maybe TopicWithVotes
     -> List ContinuationVote
     -> { b | now : Maybe Time.Posix, deadline : Maybe Time.Posix }
-    -> Int
+    -> String
     -> Html Msg
 discussionView creds maybeDiscussedTopic continuationVotes times timerInput =
     div
@@ -686,7 +689,11 @@ discussionView creds maybeDiscussedTopic continuationVotes times timerInput =
         )
 
 
-remainingTime : Credentials a -> { b | now : Maybe Time.Posix, deadline : Maybe Time.Posix } -> Int -> Html Msg
+remainingTime :
+    Credentials a
+    -> { b | now : Maybe Time.Posix, deadline : Maybe Time.Posix }
+    -> String
+    -> Html Msg
 remainingTime creds times currentInput =
     case times.now of
         Nothing ->
@@ -786,7 +793,7 @@ atLeast minimum value =
     max minimum value
 
 
-remainingTimeInput : Int -> Html Msg
+remainingTimeInput : String -> Html Msg
 remainingTimeInput currentInput =
     div
         [ css
@@ -798,9 +805,10 @@ remainingTimeInput currentInput =
         [ form [ onSubmit TimerStarted ]
             [ input
                 [ type_ "number"
-                , value (String.fromInt currentInput)
+                , value currentInput
                 , onInput TimerInputChanged
                 , Attributes.min "0"
+                , Attributes.required True
                 , css [ inputStyle ]
                 ]
                 []
