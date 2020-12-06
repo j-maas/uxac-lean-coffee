@@ -8,7 +8,7 @@ import Css.Media as Media
 import Dict exposing (Dict)
 import Html as PlainHtml
 import Html.Styled as Html exposing (Html, button, div, form, h1, h2, input, label, li, ol, p, text, textarea)
-import Html.Styled.Attributes exposing (css, placeholder, src, type_, value)
+import Html.Styled.Attributes as Attributes exposing (css, placeholder, src, type_, value)
 import Html.Styled.Events exposing (onClick, onInput, onSubmit)
 import Json.Decode as Decode exposing (Decoder)
 import Json.Decode.Pipeline
@@ -290,7 +290,7 @@ update msg model =
         TimerInputChanged raw ->
             case String.toInt raw of
                 Just newInput ->
-                    ( { model | timerInput = newInput }, Cmd.none )
+                    ( { model | timerInput = newInput |> atLeast 0 }, Cmd.none )
 
                 Nothing ->
                     ( model, Cmd.none )
@@ -664,7 +664,7 @@ remainingTimeDisplay times =
                     differenceMinutes =
                         ceiling (toFloat difference / (60 * 1000))
                             -- Cap at 0 to prevent negative times.
-                            |> max 0
+                            |> atLeast 0
 
                     message =
                         if differenceMinutes == 1 then
@@ -719,6 +719,11 @@ remainingTimeDisplay times =
         ]
 
 
+atLeast : Int -> Int -> Int
+atLeast minimum value =
+    max minimum value
+
+
 remainingTimeInput : Int -> Html Msg
 remainingTimeInput currentInput =
     div
@@ -733,6 +738,7 @@ remainingTimeInput currentInput =
                 [ type_ "number"
                 , value (String.fromInt currentInput)
                 , onInput TimerInputChanged
+                , Attributes.min "0"
                 , css [ inputStyle ]
                 ]
                 []
