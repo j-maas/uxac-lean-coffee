@@ -323,8 +323,14 @@ update msg model =
                             Time.posixToMillis now
                                 + timerInputInMilliseconds
                                 |> Time.millisToPosix
+
+                        cmds =
+                            Cmd.batch
+                                [ submitDeadline model.workspace deadline
+                                , clearContinuationVotes model.workspace model.continuationVotes
+                                ]
                     in
-                    ( model, submitDeadline model.workspace deadline )
+                    ( model, cmds )
 
                 _ ->
                     ( model, Cmd.none )
