@@ -7,7 +7,7 @@ import Css.Global as Global
 import Css.Media as Media
 import Dict exposing (Dict)
 import Html as PlainHtml
-import Html.Styled as Html exposing (Html, button, div, form, h1, h2, input, label, li, ol, p, text, textarea)
+import Html.Styled as Html exposing (Html, button, div, form, h1, h2, input, label, li, ol, p, span, text, textarea)
 import Html.Styled.Attributes as Attributes exposing (css, placeholder, src, type_, value)
 import Html.Styled.Events exposing (onClick, onInput, onSubmit)
 import Json.Decode as Decode exposing (Decoder)
@@ -940,7 +940,7 @@ topicEntry user newTopicInput =
 
 
 topicsToVote : Credentials a -> Remote (List TopicWithVotes) -> Html Msg -> Html Msg
-topicsToVote model remoteTopics toolbar =
+topicsToVote creds remoteTopics toolbar =
     div
         [ css
             [ backgroundColor
@@ -948,62 +948,76 @@ topicsToVote model remoteTopics toolbar =
             , borderRadius
             ]
         ]
-        (case remoteTopics of
+        [ div
+            [ css
+                [ Css.displayFlex
+                , Css.flexDirection Css.row
+                , Css.flexWrap Css.wrap
+                , Css.alignItems Css.center
+                , Css.marginBottom (rem 1)
+                ]
+            ]
+            [ h2
+                [ css
+                    [ Css.margin zero
+                    , Css.marginRight (rem 1)
+                    ]
+                ]
+                [ text "Suggested topics" ]
+            , toolbar
+            ]
+        , case remoteTopics of
             Loading ->
-                [ text "Loading topics…" ]
+                text "Loading topics…"
 
             Got topics ->
-                [ div
-                    [ css
-                        [ Css.displayFlex
-                        , Css.flexDirection Css.row
-                        , Css.flexWrap Css.wrap
-                        , Css.alignItems Css.center
-                        , Css.marginBottom (rem 1)
-                        ]
-                    ]
-                    [ h2
-                        [ css
-                            [ Css.margin zero
-                            , Css.marginRight (rem 1)
+                case List.length topics of
+                    0 ->
+                        span
+                            [ css
+                                [ Css.fontStyle Css.italic
+                                ]
                             ]
-                        ]
-                        [ text "Suggested topics" ]
-                    , toolbar
-                    ]
-                , let
-                    breakpoint =
-                        rem 40
-                  in
-                  ol
-                    [ css
-                        [ listUnstyle
-                        , Css.displayFlex
-                        , Css.flexDirection Css.column
-                        , Media.withMedia [ Media.all [ Media.maxWidth breakpoint ] ]
-                            [ listItemSpacing
-                            ]
-                        , Media.withMedia [ Media.all [ Media.minWidth breakpoint ] ]
-                            [ Css.property
-                                "display"
-                                "grid"
+                            [ text "No topics suggested yet. Add a topic above." ]
 
-                            -- TODO: Consider allowing smaller widths on narrow devices via media queries.
-                            , Css.property "grid-template-columns" "repeat(auto-fill, minmax(20rem, 1fr))"
-                            , Css.property "row-gap" "2rem"
-                            , Css.property "column-gap" "1rem"
-                            ]
-                        ]
-                    ]
-                    (List.map
-                        (\topic ->
-                            li
-                                []
-                                [ topicToVoteCard model topic ]
-                        )
-                        topics
-                    )
+                    _ ->
+                        topicsToVoteList creds topics toolbar
+        ]
+
+
+topicsToVoteList : Credentials a -> List TopicWithVotes -> Html Msg -> Html Msg
+topicsToVoteList creds topics toolbar =
+    let
+        breakpoint =
+            rem 40
+    in
+    ol
+        [ css
+            [ listUnstyle
+            , Css.displayFlex
+            , Css.flexDirection Css.column
+            , Media.withMedia [ Media.all [ Media.maxWidth breakpoint ] ]
+                [ listItemSpacing
                 ]
+            , Media.withMedia [ Media.all [ Media.minWidth breakpoint ] ]
+                [ Css.property
+                    "display"
+                    "grid"
+
+                -- TODO: Consider allowing smaller widths on narrow devices via media queries.
+                , Css.property "grid-template-columns" "repeat(auto-fill, minmax(20rem, 1fr))"
+                , Css.property "row-gap" "2rem"
+                , Css.property "column-gap" "1rem"
+                ]
+            ]
+        ]
+        (List.map
+            (\topic ->
+                li
+                    []
+                    [ topicToVoteCard creds topic ]
+            )
+            topics
         )
 
 
