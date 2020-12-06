@@ -21,12 +21,17 @@ firebase.initializeApp(firebaseConfig);
 
 const db = firebase.firestore();
 
+const flags = {
+  timestampField: firebase.firestore.FieldValue.serverTimestamp(),
+  isAdmin: window.location.hash === "#admin",
+  workspaceQuery: window.location.search
+};
+
+console.log("Initializing Elm with flags:\n", flags);
+
 const app = Elm.Main.init({
   node: document.getElementById("root"),
-  flags: {
-    timestampField: firebase.firestore.FieldValue.serverTimestamp(),
-    isAdmin: window.location.hash === "#admin"
-  }
+  flags,
 });
 
 
