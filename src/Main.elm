@@ -44,6 +44,7 @@ type alias Model =
     , user : Remote User
     , isAdmin : Bool
     , error : Maybe Error
+    , workspace : Maybe String
 
     {- This allows us to specify that a server should add a timestamp
        in a document's field.
@@ -99,11 +100,23 @@ type alias TimestampField =
 type alias Flags =
     { timestampField : TimestampField
     , isAdmin : Bool
+    , workspaceQuery : String
     }
 
 
 init : Flags -> ( Model, Cmd Msg )
 init flags =
+    let
+        workspaceQueryPrefix =
+            "?workspace="
+
+        workspace =
+            if String.startsWith workspaceQueryPrefix flags.workspaceQuery then
+                Just <| String.dropLeft (String.length workspaceQueryPrefix) flags.workspaceQuery
+
+            else
+                Nothing
+    in
     ( { inDiscussion = Nothing
       , topics = Loading
       , discussed = []
@@ -116,9 +129,10 @@ init flags =
       , user = Loading
       , isAdmin = flags.isAdmin
       , error = Nothing
+      , workspace = workspace
       , timestampField = flags.timestampField
       }
-    , firestoreSubscriptionsCmd
+    , firestoreSubscriptionsCmd workspace
     )
 
 
@@ -216,14 +230,16 @@ update msg model =
 
         SaveTopic user ->
             ( { model | newTopicInput = "" }
-            , submitTopic model.timestampField { topic = model.newTopicInput, userId = user.id }
+            , submitTopic model.workspace
+                model.timestampField
+                { topic = model.newTopicInput, userId = user.id }
             )
 
         DeleteTopic id ->
-            ( model, deleteTopic id model.votes )
+            ( model, deleteTopic model.workspace id model.votes )
 
         Discuss topicId ->
-            ( model, submitTopicInDiscussion topicId )
+            ( model, submitTopicInDiscussion model.workspace topicId )
 
         FinishDiscussionClicked ->
             case model.inDiscussion of
@@ -231,9 +247,9 @@ update msg model =
                     let
                         cmds =
                             Cmd.batch
-                                [ finishDiscussion inDiscussion
-                                , clearContinuationVotes model.continuationVotes
-                                , clearDeadline
+                                [ finishDiscussion model.workspace inDiscussion
+                                , clearContinuationVotes model.workspace model.continuationVotes
+                                , clearDeadline model.workspace
                                 ]
                     in
                     ( model, cmds )
@@ -244,25 +260,25 @@ update msg model =
         VoteAgainClicked ->
             case model.inDiscussion of
                 Just inDiscussion ->
-                    ( model, removeTopicInDiscussion )
+                    ( model, removeTopicInDiscussion model.workspace )
 
                 Nothing ->
                     ( model, Cmd.none )
 
         ContinuationVoteSent vote ->
-            ( model, submitContinuationVote vote )
+            ( model, submitContinuationVote model.workspace vote )
 
         RemoveContinuationVote userId ->
-            ( model, retractContinuationVote userId )
+            ( model, retractContinuationVote model.workspace userId )
 
         SortTopics ->
             ( { model | topics = Remote.map (TopicList.sort voteCountMap) model.topics }, Cmd.none )
 
         Upvote user topic ->
-            ( model, submitVote (voteFrom user topic) )
+            ( model, submitVote model.workspace (voteFrom user topic) )
 
         RemoveUpvote user topic ->
-            ( model, retractVote (voteFrom user topic) )
+            ( model, retractVote model.workspace (voteFrom user topic) )
 
         NewTopicInputChanged value ->
             ( { model | newTopicInput = value }, Cmd.none )
@@ -288,10 +304,10 @@ update msg model =
                         + timerInputInMilliseconds
                         |> Time.millisToPosix
             in
-            ( model, submitDeadline deadline )
+            ( model, submitDeadline model.workspace deadline )
 
         TimerCleared ->
-            ( model, clearDeadline )
+            ( model, clearDeadline model.workspace )
 
 
 voteCountMapFromVotes : Remote Votes -> VoteCountMap
@@ -317,10 +333,10 @@ updateTopicList voteCountMap newTopics currentTopics =
         |> Got
 
 
-submitTopic : TimestampField -> TopicSubmission -> Cmd msg
-submitTopic timestampField submission =
+submitTopic : Maybe String -> TimestampField -> TopicSubmission -> Cmd msg
+submitTopic workspace timestampField submission =
     insertDoc
-        { collectionPath = topicCollectionPath
+        { collectionPath = topicCollectionPath workspace
         , doc =
             topicEncoder
                 submission
@@ -328,11 +344,11 @@ submitTopic timestampField submission =
         }
 
 
-deleteTopic : TopicId -> Remote Votes -> Cmd msg
-deleteTopic topicId votes =
+deleteTopic : Maybe String -> TopicId -> Remote Votes -> Cmd msg
+deleteTopic workspace topicId votes =
     let
         topicPath =
-            topicCollectionPath ++ [ topicId ]
+            topicCollectionPath workspace ++ [ topicId ]
 
         {- We delete all associated votes as well.
            TODO: This smells like there might be a race condition when others add votes when we delete them. Instead, use batches. See https://github.com/Y0hy0h/uxac-lean-coffee/issues/37.
@@ -342,97 +358,97 @@ deleteTopic topicId votes =
                 |> Maybe.withDefault Dict.empty
                 |> Dict.get topicId
                 |> Maybe.withDefault []
-                |> List.map (\userId -> topicVotePath { userId = userId, topicId = topicId })
+                |> List.map (\userId -> topicVotePath workspace { userId = userId, topicId = topicId })
     in
     deleteDocs (topicPath :: votePaths)
 
 
-submitVote : Vote -> Cmd msg
-submitVote vote =
+submitVote : Maybe String -> Vote -> Cmd msg
+submitVote workspace vote =
     setDoc
-        { docPath = topicVotePath vote
+        { docPath = topicVotePath workspace vote
         , doc =
             topicVoteEncoder vote
         }
 
 
-topicVotePath : Vote -> Path
-topicVotePath ids =
-    voteCollectionPath ++ [ ids.userId ++ ":" ++ ids.topicId ]
+topicVotePath : Maybe String -> Vote -> Path
+topicVotePath workspace ids =
+    voteCollectionPath workspace ++ [ ids.userId ++ ":" ++ ids.topicId ]
 
 
-retractVote : Vote -> Cmd msg
-retractVote vote =
-    deleteDocs [ topicVotePath vote ]
+retractVote : Maybe String -> Vote -> Cmd msg
+retractVote workspace vote =
+    deleteDocs [ topicVotePath workspace vote ]
 
 
-submitContinuationVote : ContinuationVote -> Cmd msg
-submitContinuationVote vote =
+submitContinuationVote : Maybe String -> ContinuationVote -> Cmd msg
+submitContinuationVote workspace vote =
     setDoc
-        { docPath = continuationVotePath vote.userId
+        { docPath = continuationVotePath workspace vote.userId
         , doc = continuationVoteEncoder vote
         }
 
 
-retractContinuationVote : UserId -> Cmd msg
-retractContinuationVote userId =
+retractContinuationVote : Maybe String -> UserId -> Cmd msg
+retractContinuationVote workspace userId =
     deleteDocs
-        [ continuationVotePath userId
+        [ continuationVotePath workspace userId
         ]
 
 
-clearContinuationVotes : List ContinuationVote -> Cmd msg
-clearContinuationVotes votes =
+clearContinuationVotes : Maybe String -> List ContinuationVote -> Cmd msg
+clearContinuationVotes workspace votes =
     deleteDocs
         (List.map
             (\vote ->
-                continuationVotePath vote.userId
+                continuationVotePath workspace vote.userId
             )
             votes
         )
 
 
-continuationVotePath : UserId -> Path
-continuationVotePath userId =
-    continuationVoteCollectionPath ++ [ userId ]
+continuationVotePath : Maybe String -> UserId -> Path
+continuationVotePath workspace userId =
+    continuationVoteCollectionPath workspace ++ [ userId ]
 
 
-submitTopicInDiscussion : TopicId -> Cmd msg
-submitTopicInDiscussion topicId =
+submitTopicInDiscussion : Maybe String -> TopicId -> Cmd msg
+submitTopicInDiscussion workspace topicId =
     setDoc
-        { docPath = inDiscussionDocPath
+        { docPath = inDiscussionDocPath workspace
         , doc = topicIdEncoder topicId
         }
 
 
-finishDiscussion : TopicId -> Cmd msg
-finishDiscussion topicId =
+finishDiscussion : Maybe String -> TopicId -> Cmd msg
+finishDiscussion workspace topicId =
     Cmd.batch
-        [ deleteDocs [ inDiscussionDocPath ]
+        [ deleteDocs [ inDiscussionDocPath workspace ]
         , insertDoc
-            { collectionPath = discussedCollectionPath
+            { collectionPath = discussedCollectionPath workspace
             , doc = topicIdEncoder topicId
             }
         ]
 
 
-removeTopicInDiscussion : Cmd msg
-removeTopicInDiscussion =
-    deleteDocs [ inDiscussionDocPath ]
+removeTopicInDiscussion : Maybe String -> Cmd msg
+removeTopicInDiscussion workspace =
+    deleteDocs [ inDiscussionDocPath workspace ]
 
 
-submitDeadline : Time.Posix -> Cmd msg
-submitDeadline deadline =
+submitDeadline : Maybe String -> Time.Posix -> Cmd msg
+submitDeadline workspace deadline =
     setDoc
-        { docPath = discussionDeadlineDocPath
+        { docPath = discussionDeadlineDocPath workspace
         , doc = encodeDeadline deadline
         }
 
 
-clearDeadline : Cmd msg
-clearDeadline =
+clearDeadline : Maybe String -> Cmd msg
+clearDeadline workspace =
     deleteDocs
-        [ discussionDeadlineDocPath
+        [ discussionDeadlineDocPath workspace
         ]
 
 
@@ -1264,45 +1280,61 @@ subscriptions model =
 --- PORTS
 
 
-topicCollectionPath : Path
-topicCollectionPath =
+topicCollectionPath : Maybe String -> Path
+topicCollectionPath workspace =
     [ "topics" ]
+        |> prependWorkspace workspace
 
 
-voteCollectionPath : Path
-voteCollectionPath =
+voteCollectionPath : Maybe String -> Path
+voteCollectionPath workspace =
     [ "votes" ]
+        |> prependWorkspace workspace
 
 
-inDiscussionDocPath : Path
-inDiscussionDocPath =
+inDiscussionDocPath : Maybe String -> Path
+inDiscussionDocPath workspace =
     [ "discussion", "topic" ]
+        |> prependWorkspace workspace
 
 
-discussionDeadlineDocPath : Path
-discussionDeadlineDocPath =
+discussionDeadlineDocPath : Maybe String -> Path
+discussionDeadlineDocPath workspace =
     [ "discussion", "deadline" ]
+        |> prependWorkspace workspace
 
 
-continuationVoteCollectionPath : Path
-continuationVoteCollectionPath =
+continuationVoteCollectionPath : Maybe String -> Path
+continuationVoteCollectionPath workspace =
     [ "continuationVotes" ]
+        |> prependWorkspace workspace
 
 
-discussedCollectionPath : Path
-discussedCollectionPath =
+discussedCollectionPath : Maybe String -> Path
+discussedCollectionPath workspace =
     [ "discussed" ]
+        |> prependWorkspace workspace
 
 
-firestoreSubscriptionsCmd : Cmd Msg
-firestoreSubscriptionsCmd =
+prependWorkspace : Maybe String -> Path -> Path
+prependWorkspace maybeWorkspace path =
+    case maybeWorkspace of
+        Nothing ->
+            path
+
+        Just workspace ->
+            [ "workspaces", workspace ] ++ path
+
+
+firestoreSubscriptionsCmd : Maybe String -> Cmd Msg
+firestoreSubscriptionsCmd workspace =
     Cmd.batch
-        [ subscribe { kind = Collection, path = topicCollectionPath, tag = TopicsTag }
-        , subscribe { kind = Collection, path = voteCollectionPath, tag = VotesTag }
-        , subscribe { kind = Doc, path = inDiscussionDocPath, tag = InDiscussionTag }
-        , subscribe { kind = Collection, path = continuationVoteCollectionPath, tag = ContinuationVotesTag }
-        , subscribe { kind = Collection, path = discussedCollectionPath, tag = DiscussedTag }
-        , subscribe { kind = Doc, path = discussionDeadlineDocPath, tag = DeadlineTag }
+        [ subscribe { kind = Collection, path = topicCollectionPath workspace, tag = TopicsTag }
+        , subscribe { kind = Collection, path = voteCollectionPath workspace, tag = VotesTag }
+        , subscribe { kind = Doc, path = inDiscussionDocPath workspace, tag = InDiscussionTag }
+        , subscribe { kind = Collection, path = continuationVoteCollectionPath workspace, tag = ContinuationVotesTag }
+        , subscribe { kind = Collection, path = discussedCollectionPath workspace, tag = DiscussedTag }
+        , subscribe { kind = Doc, path = discussionDeadlineDocPath workspace, tag = DeadlineTag }
         ]
 
 
