@@ -39,7 +39,7 @@ type alias Model =
     , votes : Remote Votes
     , continuationVotes : List ContinuationVote
     , deadline : Maybe Time.Posix
-    , now : Time.Posix
+    , now : Maybe Time.Posix
     , timerInput : Int
     , newTopicInput : String
     , user : Remote User
@@ -124,7 +124,7 @@ init flags =
       , votes = Loading
       , continuationVotes = []
       , deadline = Nothing
-      , now = Time.millisToPosix 0
+      , now = Nothing
       , timerInput = 10
       , newTopicInput = ""
       , user = Loading
@@ -285,7 +285,7 @@ update msg model =
             ( { model | newTopicInput = value }, Cmd.none )
 
         Tick now ->
-            ( { model | now = now }, Cmd.none )
+            ( { model | now = Just now }, Cmd.none )
 
         TimerInputChanged raw ->
             case String.toInt raw of
@@ -296,16 +296,21 @@ update msg model =
                     ( model, Cmd.none )
 
         TimerStarted ->
-            let
-                timerInputInMilliseconds =
-                    model.timerInput * 1000 * 60
+            case model.now of
+                Nothing ->
+                    ( model, Cmd.none )
 
-                deadline =
-                    Time.posixToMillis model.now
-                        + timerInputInMilliseconds
-                        |> Time.millisToPosix
-            in
-            ( model, submitDeadline model.workspace deadline )
+                Just now ->
+                    let
+                        timerInputInMilliseconds =
+                            model.timerInput * 1000 * 60
+
+                        deadline =
+                            Time.posixToMillis now
+                                + timerInputInMilliseconds
+                                |> Time.millisToPosix
+                    in
+                    ( model, submitDeadline model.workspace deadline )
 
         TimerCleared ->
             ( model, clearDeadline model.workspace )
@@ -582,7 +587,7 @@ discussionView :
     Credentials a
     -> Maybe TopicWithVotes
     -> List ContinuationVote
-    -> { b | now : Time.Posix, deadline : Maybe Time.Posix }
+    -> { b | now : Maybe Time.Posix, deadline : Maybe Time.Posix }
     -> Int
     -> Html Msg
 discussionView creds maybeDiscussedTopic continuationVotes times timerInput =
@@ -619,23 +624,28 @@ discussionView creds maybeDiscussedTopic continuationVotes times timerInput =
         )
 
 
-remainingTime : Credentials a -> { b | now : Time.Posix, deadline : Maybe Time.Posix } -> Int -> Html Msg
+remainingTime : Credentials a -> { b | now : Maybe Time.Posix, deadline : Maybe Time.Posix } -> Int -> Html Msg
 remainingTime creds times currentInput =
-    let
-        timeDisplay =
-            remainingTimeDisplay times
+    case times.now of
+        Nothing ->
+            div [] [ text "Loading timer…" ]
 
-        maybeTimeInput =
-            if creds.isAdmin then
-                [ remainingTimeInput currentInput ]
+        Just now ->
+            let
+                timeDisplay =
+                    remainingTimeDisplay { now = now, deadline = times.deadline }
 
-            else
-                []
-    in
-    div [ css [ listItemSpacing ] ]
-        (maybeTimeInput
-            ++ [ div [] [ timeDisplay ] ]
-        )
+                maybeTimeInput =
+                    if creds.isAdmin then
+                        [ remainingTimeInput currentInput ]
+
+                    else
+                        []
+            in
+            div [ css [ listItemSpacing ] ]
+                (maybeTimeInput
+                    ++ [ div [] [ timeDisplay ] ]
+                )
 
 
 remainingTimeDisplay : { a | now : Time.Posix, deadline : Maybe Time.Posix } -> Html Msg
