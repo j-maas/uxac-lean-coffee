@@ -527,7 +527,7 @@ view model =
             ([ h1 [] [ text heading ] ]
                 ++ errorView model.error
                 ++ [ discussionView model inDiscussion model.continuationVotes model model.timerInput ]
-                ++ [ discussedTopics model discussedList ]
+                ++ discussedTopics model discussedList
                 ++ [ topicEntry model.user model.newTopicInput ]
             )
         , topicsToVote model topicList (sortBarView model.votes model.topics)
@@ -833,32 +833,47 @@ backgroundColor =
     Css.backgroundColor (Css.hsl primaryHue 0.2 0.95)
 
 
-discussedTopics : Credentials a -> List TopicWithVotes -> Html Msg
+discussedTopics : Credentials a -> List TopicWithVotes -> List (Html Msg)
 discussedTopics model topics =
-    Html.details
-        [ css
-            [ containerPadding
-            , backgroundColor
-            , borderRadius
-            ]
-        ]
-        [ Html.summary [] [ text "Discussed topics" ]
-        , ol
-            [ css
-                [ listUnstyle
-                , listItemSpacing
-                , Css.marginTop (rem 1)
+    case List.length topics of
+        0 ->
+            []
+
+        numberOfTopics ->
+            let
+                pluralizedHeading =
+                    case numberOfTopics of
+                        1 ->
+                            "1 discussed topic"
+
+                        n ->
+                            String.fromInt n ++ " dicussed topics"
+            in
+            [ Html.details
+                [ css
+                    [ containerPadding
+                    , backgroundColor
+                    , borderRadius
+                    ]
+                ]
+                [ Html.summary [] [ text pluralizedHeading ]
+                , ol
+                    [ css
+                        [ listUnstyle
+                        , listItemSpacing
+                        , Css.marginTop (rem 1)
+                        ]
+                    ]
+                    (List.map
+                        (\topic ->
+                            li []
+                                [ finishedTopicCard model topic
+                                ]
+                        )
+                        topics
+                    )
                 ]
             ]
-            (List.map
-                (\topic ->
-                    li []
-                        [ finishedTopicCard model topic
-                        ]
-                )
-                topics
-            )
-        ]
 
 
 continuationVote : Remote User -> List ContinuationVote -> Html Msg
