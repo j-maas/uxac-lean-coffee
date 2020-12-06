@@ -89,9 +89,19 @@ type alias UserId =
     String
 
 
-type Error
-    = FirestoreError { code : String, errorMessage : String }
-    | ParsingError String
+type alias Error =
+    { summary : String
+    , info : ErrorInfo
+    }
+
+
+type ErrorInfo
+    = FirestoreError FirestoreErrorInfo
+    | ParsingError Decode.Error
+
+
+type alias FirestoreErrorInfo =
+    { code : String, errorMessage : String }
 
 
 type alias TimestampField =
@@ -160,7 +170,8 @@ type Msg
     | RemoveUpvote User Topic
     | ContinuationVoteSent ContinuationVote
     | RemoveContinuationVote UserId
-    | ErrorReceived (Result Decode.Error Error)
+    | ErrorReceived (Result Decode.Error FirestoreErrorInfo)
+    | DismissError
     | NewTopicInputChanged String
     | Tick Time.Posix
     | TimerInputChanged String
@@ -181,10 +192,10 @@ update msg model =
                     ( { model | user = Got user }, Cmd.none )
 
                 Err error ->
-                    ( { model | error = Just (ParsingError (Decode.errorToString error)) }, Cmd.none )
+                    ( { model | error = Just (processParsingError error) }, Cmd.none )
 
         DecodeError error ->
-            ( { model | error = Just <| ParsingError (Decode.errorToString error) }, Cmd.none )
+            ( { model | error = Just (processParsingError error) }, Cmd.none )
 
         TopicsReceived topics ->
             ( { model | topics = updateTopicList voteCountMap topics model.topics }, Cmd.none )
@@ -223,11 +234,14 @@ update msg model =
 
         ErrorReceived result ->
             case result of
-                Ok value ->
-                    ( { model | error = Just value }, Cmd.none )
+                Ok info ->
+                    ( { model | error = Just <| processFirestoreError info }, Cmd.none )
 
                 Err error ->
-                    ( { model | error = Just (ParsingError (Decode.errorToString error)) }, Cmd.none )
+                    ( { model | error = Just (processParsingError error) }, Cmd.none )
+
+        DismissError ->
+            ( { model | error = Nothing }, Cmd.none )
 
         SaveTopic user ->
             ( { model | newTopicInput = "" }
@@ -314,6 +328,20 @@ update msg model =
 
         TimerCleared ->
             ( model, clearDeadline model.workspace )
+
+
+processParsingError : Decode.Error -> Error
+processParsingError decodeError =
+    { summary = "I received some weird data. Hopefully we can just ignore it, but something might not be working anymore."
+    , info = ParsingError decodeError
+    }
+
+
+processFirestoreError : FirestoreErrorInfo -> Error
+processFirestoreError info =
+    { summary = "There was a problem with the database."
+    , info = FirestoreError info
+    }
 
 
 voteCountMapFromVotes : Remote Votes -> VoteCountMap
@@ -573,10 +601,44 @@ errorView maybeError =
             [ div
                 [ css
                     [ Css.border3 (px 1) Css.solid (Css.hsl 0 0.8 0.75)
+                    , borderRadius
+                    , listItemSpacing
                     , Css.padding (rem 1)
+                    , Css.displayFlex
+                    , Css.flexDirection Css.column
+                    , Css.alignItems Css.flexStart
                     ]
                 ]
-                [ text <| stringFromError error ]
+                [ Html.details
+                    [ css
+                        [ Css.border3 (px 1) Css.solid (Css.hsl 0 0 0)
+                        , borderRadius
+                        , listItemSpacing
+                        , containerPadding
+                        , Css.width (pct 100)
+                        , Css.boxSizing Css.borderBox
+                        ]
+                    ]
+                    [ Html.summary [] [ text error.summary ]
+                    , div [ css [ Css.fontStyle Css.italic ] ] [ text "Detailed info for experts:" ]
+                    , Html.pre []
+                        [ Html.code [] [ text <| stringFromErrorInfo error.info ]
+                        ]
+                    ]
+                , div
+                    [ css
+                        [ Css.fontStyle Css.italic
+                        ]
+                    ]
+                    [ text "Please report this error to the person who invited you here." ]
+                , button
+                    [ css
+                        [ buttonStyle
+                        ]
+                    , onClick DismissError
+                    ]
+                    [ text "Close this message" ]
+                ]
             ]
 
         Nothing ->
@@ -959,14 +1021,14 @@ bodyFont =
     Css.fontFamilies [ "Verdana", .value Css.sansSerif ]
 
 
-stringFromError : Error -> String
-stringFromError error =
-    case error of
+stringFromErrorInfo : ErrorInfo -> String
+stringFromErrorInfo info =
+    case info of
         FirestoreError { code, errorMessage } ->
-            "There was an error with the database: " ++ errorMessage ++ " (code " ++ code ++ ")"
+            errorMessage ++ " (code " ++ code ++ ")"
 
-        ParsingError errorMessage ->
-            "There was an error with how the data looks like: " ++ errorMessage
+        ParsingError decodeError ->
+            Decode.errorToString decodeError
 
 
 sortBarView : Remote Votes -> Remote TopicList -> Html Msg
@@ -1327,7 +1389,7 @@ subscriptions model =
     Sub.batch
         [ receiveFirestoreSubscriptions
         , receiveUser_ (Decode.decodeValue userDecoder >> UserReceived)
-        , receiveError_ (Decode.decodeValue errorDecoder >> ErrorReceived)
+        , receiveError_ (Decode.decodeValue firestoreErrorDecoder >> ErrorReceived)
         , Time.every 1000 Tick
         ]
 
@@ -1754,11 +1816,11 @@ encodeDeadline deadline =
     Encode.object [ ( "time", Time.posixToMillis deadline |> Encode.int ) ]
 
 
-errorDecoder : Decoder Error
-errorDecoder =
+firestoreErrorDecoder : Decoder FirestoreErrorInfo
+firestoreErrorDecoder =
     Decode.map2
         (\code errorMessage ->
-            FirestoreError { code = code, errorMessage = errorMessage }
+            { code = code, errorMessage = errorMessage }
         )
         (Decode.field "code" Decode.string)
         (Decode.field "message" Decode.string)
