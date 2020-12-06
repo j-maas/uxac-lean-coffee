@@ -2,6 +2,7 @@ port module Main exposing (Model, Msg(..), init, main, update, view)
 
 import Browser
 import Css exposing (auto, num, pct, px, rem, zero)
+import Css.Animations as Animations
 import Css.Global as Global
 import Css.Media as Media
 import Dict exposing (Dict)
@@ -651,7 +652,7 @@ remainingTimeDisplay times =
                             - Time.posixToMillis times.now
 
                     differenceMinutes =
-                        floor (toFloat difference / (60 * 1000))
+                        ceiling (toFloat difference / (60 * 1000))
                             -- Cap at 0 to prevent negative times.
                             |> max 0
 
@@ -664,8 +665,47 @@ remainingTimeDisplay times =
 
                         else
                             String.fromInt differenceMinutes ++ " minutes left…"
+
+                    blinkAnimation duration =
+                        let
+                            blinkInPercent =
+                                1 / duration
+
+                            fadeOutPercent =
+                                (2 / 3 * blinkInPercent * 100)
+                                    |> round
+
+                            fadeInPercent =
+                                (blinkInPercent * 100)
+                                    |> round
+                        in
+                        Css.batch
+                            [ Css.animationName <|
+                                Animations.keyframes
+                                    [ ( 0, [ Animations.opacity (num 1) ] )
+                                    , ( fadeOutPercent, [ Animations.opacity (num 0) ] )
+                                    , ( fadeInPercent, [ Animations.opacity (num 1) ] )
+                                    ]
+                            , Css.animationDuration (Css.sec duration)
+                            , Css.property "animation-iteration-count" "infinite"
+                            ]
+
+                    maybeAnimation =
+                        if differenceMinutes == 1 then
+                            blinkAnimation 10
+
+                        else if differenceMinutes == 0 then
+                            blinkAnimation 3
+
+                        else
+                            Css.batch []
                 in
-                text message
+                div
+                    [ css
+                        [ maybeAnimation
+                        ]
+                    ]
+                    [ text message ]
         ]
 
 
