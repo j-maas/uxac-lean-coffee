@@ -12,6 +12,7 @@
   },
   "scripts": {
     "build": "elm-app build",
-    "start": "elm-app start"
+    "start": "elm-app start",
+    "test": "elm-app test"
   }
 }

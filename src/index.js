@@ -11,7 +11,6 @@ import registerServiceWorker from "./registerServiceWorker";
 const firebaseConfig = {
   apiKey: process.env.ELM_APP_API_KEY,
   authDomain: process.env.ELM_APP_AUTH_DOMAIN,
-  databaseURL: process.env.ELM_APP_DATABASE_URL,
   projectId: process.env.ELM_APP_PROJECT_ID,
   storageBucket: process.env.ELM_APP_STORAGE_BUCKET,
   messagingSenderId: process.env.ELM_APP_MESSAGING_SENDER_ID,
@@ -22,95 +21,113 @@ firebase.initializeApp(firebaseConfig);
 
 const db = firebase.firestore();
 
+const flags = {
+  timestampField: firebase.firestore.FieldValue.serverTimestamp(),
+  isAdmin: window.location.hash === "#admin",
+  workspaceQuery: window.location.search
+};
+
+console.log("Initializing Elm with flags:\n", flags);
+
 const app = Elm.Main.init({
   node: document.getElementById("root"),
-  flags: {
-    timestampField: firebase.firestore.FieldValue.serverTimestamp(),
-    isAdmin: window.location.hash === "#admin"
-  }
+  flags,
 });
 
-const topic_collection_path = "test_topics"
-const votes_collection_path = "test_votes"
+
+// Sign in and pass the user to Elm.
 
 firebase.auth().signInAnonymously()
   .then(user => {
     const id = user.user.uid
     console.log(`User is logged in with id ${id}.`)
 
-    app.ports.receiveUser.send({ id: id })
+    app.ports.receiveUser_.send({ id: id })
   })
+  .catch(sendErrorToElm);
 
-db.collection(topic_collection_path).onSnapshot(docs => {
-  const topics = [];
 
-  docs.forEach(doc => {
-    const topic = doc.data();
-    topic.id = doc.id;
-    topics.push(topic);
-  });
+// Set up ports so that we can subscribe to collections and docs from Elm.
 
-  console.log("Received new topics: ", topics);
-  app.ports.receiveTopics.send(topics);
+app.ports.subscribe_.subscribe(info => {
+  if (info.kind === "collection") {
+    subscribeToCollection(info.path, info.tag)
+  } else if (info.kind === "doc") {
+    subscribeToDoc(info.path, info.tag)
+  } else {
+    console.error(`Invalid subscription kind ${info.kind}.`);
+  }
 });
 
-db.collection(votes_collection_path).onSnapshot(docs => {
-  const votes = [];
+function subscribeToCollection(path, tag) {
+  console.log(`Subscribing to collection at ${path}.`);
 
-  docs.forEach(doc => {
-    const vote = doc.data();
-    votes.push(vote);
-  });
+  db.collection(path).onSnapshot(snapshot => {
+    const docs = [];
 
-  console.log("Received new votes: ", votes);
-  app.ports.receiveVotes.send(votes);
-});
-
-app.ports.submitTopic.subscribe(data => {
-  console.log("Submitting topic to database: ", data);
-
-  db.collection(topic_collection_path)
-    .add(data)
-    .catch(sendErrorToElm);
-});
-
-app.ports.deleteTopic.subscribe(id => {
-  console.log(`Deleting topic with id ${id}.`);
-
-  db.collection(votes_collection_path).where("topicId", "==", id)
-    .get()
-    .then(votes => {
-      votes.forEach(vote => {
-        vote.ref.delete();
+    snapshot.forEach(doc => {
+      docs.push({
+        id: doc.id,
+        data: doc.data()
       });
-    })
-    .catch(sendErrorToElm);
+    });
 
-  db.collection(topic_collection_path).doc(id)
-    .delete()
-    .catch(sendErrorToElm);
-});
-
-app.ports.submitVote.subscribe(data => {
-  db.collection(votes_collection_path)
-    .doc(getVoteId(data))
-    .set(data)
-    .catch(sendErrorToElm);
-});
-
-app.ports.retractVote.subscribe(data => {
-  db.collection(votes_collection_path)
-    .doc(getVoteId(data))
-    .delete()
-    .catch(sendErrorToElm);
-});
-
-function getVoteId(data) {
-  return `${data.userId}:${data.topicId}`;
+    console.log(`Received new snapshot for collection ${tag}:\n`, docs);
+    app.ports.receive_.send({
+      tag: tag,
+      data: docs,
+    });
+  })
 }
 
+function subscribeToDoc(path, tag) {
+  console.log(`Subscribing to doc at ${path}.`);
+
+  db.doc(path).onSnapshot(snapshot => {
+    const doc = snapshot.data();
+
+    console.log(`Received new snapshot for doc ${tag}:\n`, doc);
+    app.ports.receive_.send({
+      tag: tag,
+      data: doc,
+    });
+  })
+}
+
+
+// Set up ports so that we can add and delete docs from Elm.
+
+app.ports.insertDoc_.subscribe(info => {
+  console.log(`Adding doc at ${info.path}:\n`, info.doc);
+
+  db.collection(info.path)
+    .add(info.doc)
+    .catch(sendErrorToElm);
+});
+
+app.ports.setDoc_.subscribe(info => {
+  console.log(`Setting the doc at ${info.path}:\n`, info.doc);
+
+  db.doc(info.path)
+    .set(info.doc)
+    .catch(sendErrorToElm);
+})
+
+app.ports.deleteDocs_.subscribe(info => {
+  console.log(`Deleting the docs at ${info.paths}`);
+
+  info.paths.forEach(path => {
+    db.doc(path)
+      .delete()
+      .catch(sendErrorToElm);
+  })
+});
+
+
 function sendErrorToElm(error) {
-  app.ports.error.send({
+  console.error(error);
+
+  app.ports.receiveError_.send({
     code: error.code,
     message: error.message
   });

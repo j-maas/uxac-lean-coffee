@@ -15,6 +15,14 @@ jobs:
           persist-credentials: false
 
       - name: Build 🛠️
+        env:
+          ELM_APP_API_KEY: "${{ secrets.ELM_APP_API_KEY }}"
+          ELM_APP_AUTH_DOMAIN: "${{ secrets.ELM_APP_AUTH_DOMAIN }}"
+          ELM_APP_PROJECT_ID: "${{ secrets.ELM_APP_PROJECT_ID }}"
+          ELM_APP_STORAGE_BUCKET: "${{ secrets.ELM_APP_STORAGE_BUCKET }}"
+          ELM_APP_MESSAGING_SENDER_ID: "${{ secrets.ELM_APP_MESSAGING_SENDER_ID }}"
+          ELM_APP_APP_ID: "${{ secrets.ELM_APP_APP_ID }}"
+          PUBLIC_URL: "https://y0hy0h.github.io/uxac-lean-coffee/"
         run: |
           npm install
           npm run build
