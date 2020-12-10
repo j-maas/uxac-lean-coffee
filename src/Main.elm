@@ -7,7 +7,7 @@ import Css.Global as Global
 import Css.Media as Media
 import Dict exposing (Dict)
 import Html as PlainHtml
-import Html.Styled as Html exposing (Html, button, div, form, h1, h2, input, label, li, ol, p, span, text, textarea)
+import Html.Styled as Html exposing (Html, button, div, form, h1, h2, img, input, label, li, ol, p, span, text, textarea)
 import Html.Styled.Attributes as Attributes exposing (css, placeholder, src, type_, value)
 import Html.Styled.Events exposing (onClick, onInput, onSubmit)
 import Json.Decode as Decode exposing (Decoder)
@@ -530,7 +530,21 @@ view model =
                 , listItemSpacing
                 ]
             ]
-            ([ h1 [] [ text heading ] ]
+            ([ div
+                [ css
+                    [ Css.displayFlex
+                    , Css.flexDirection Css.row
+                    , Css.alignItems Css.center
+                    ]
+                ]
+                [ img
+                    [ src "./logo.svg"
+                    , css [ Css.maxHeight (rem 2), Css.marginRight (rem 1) ]
+                    ]
+                    []
+                , h1 [ css [ Css.margin zero ] ] [ text heading ]
+                ]
+             ]
                 ++ errorView model.error
                 ++ [ discussionView model inDiscussion model.continuationVotes model model.timerInput ]
                 ++ discussedTopics model discussedList
@@ -1420,7 +1434,7 @@ buttonPadding =
 
 primaryHue : Float
 primaryHue =
-    49.1
+    52
 
 
 
