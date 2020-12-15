@@ -953,12 +953,13 @@ continuationVote creds maybeContinuationVotes =
                                     [ text "Start vote" ]
                                 ]
 
-                            Just _ ->
+                            Just votes ->
                                 [ button
                                     [ onClick ClearContinuationVote
                                     , css [ buttonStyle ]
                                     ]
                                     [ text "Clear vote" ]
+                                , div [] [ text ("There are " ++ String.fromInt (List.length votes) ++ " votes in total.") ]
                                 ]
 
                     else
