@@ -798,7 +798,7 @@ remainingTimeDisplay times =
                             "Less than 1 minute left…"
 
                         else if differenceMinutes == 0 then
-                            "Time has run out. Do you want to stay with this topic or move on to the next?"
+                            "Time has run out."
 
                         else
                             String.fromInt differenceMinutes ++ " minutes left…"
