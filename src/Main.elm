@@ -37,7 +37,7 @@ type alias Model =
     , topics : Remote TopicList
     , discussed : List TopicId
     , votes : Remote Votes
-    , continuationVotes : List ContinuationVote
+    , continuationVotes : Maybe (List ContinuationVote)
     , deadline : Maybe Time.Posix
     , now : Maybe Time.Posix
     , timerInput : String
@@ -132,7 +132,7 @@ init flags =
       , topics = Loading
       , discussed = []
       , votes = Loading
-      , continuationVotes = []
+      , continuationVotes = Nothing
       , deadline = Nothing
       , now = Nothing
       , timerInput = "10"
@@ -157,6 +157,7 @@ type Msg
     | TopicsReceived (List Topic)
     | VotesReceived Votes
     | TopicInDiscussionReceived (Maybe TopicId)
+    | ContinuationVoteActiveReceived Bool
     | ContinuationVotesReceived (List ContinuationVote)
     | DiscussedTopicsReceived (List TopicId)
     | DeadlineReceived (Maybe Time.Posix)
@@ -168,6 +169,8 @@ type Msg
     | SortTopics
     | Upvote User Topic
     | RemoveUpvote User Topic
+    | StartContinuationVote
+    | ClearContinuationVote
     | ContinuationVoteSent ContinuationVote
     | RemoveContinuationVote UserId
     | ErrorReceived (Result Decode.Error FirestoreErrorInfo)
@@ -220,8 +223,24 @@ update msg model =
             in
             ( newModel, Cmd.none )
 
-        ContinuationVotesReceived continuationVotes ->
+        ContinuationVoteActiveReceived isActive ->
+            let
+                continuationVotes =
+                    if isActive then
+                        Just []
+
+                    else
+                        Nothing
+            in
             ( { model | continuationVotes = continuationVotes }, Cmd.none )
+
+        ContinuationVotesReceived continuationVotes ->
+            let
+                newContinuationVotes =
+                    model.continuationVotes
+                        |> Maybe.map (\_ -> continuationVotes)
+            in
+            ( { model | continuationVotes = newContinuationVotes }, Cmd.none )
 
         TopicInDiscussionReceived topic ->
             ( { model | inDiscussion = topic }, Cmd.none )
@@ -279,6 +298,12 @@ update msg model =
 
                 Nothing ->
                     ( model, Cmd.none )
+
+        StartContinuationVote ->
+            ( model, startContinuationVote model.workspace )
+
+        ClearContinuationVote ->
+            ( model, clearContinuationVotes model.workspace model.continuationVotes )
 
         ContinuationVoteSent vote ->
             ( model, submitContinuationVote model.workspace vote )
@@ -425,6 +450,14 @@ retractVote workspace vote =
     deleteDocs [ topicVotePath workspace vote ]
 
 
+startContinuationVote : Maybe String -> Cmd msg
+startContinuationVote workspace =
+    setDoc
+        { docPath = continuationVoteActiveDocPath workspace
+        , doc = encodeContinuationVoteActive True
+        }
+
+
 submitContinuationVote : Maybe String -> ContinuationVote -> Cmd msg
 submitContinuationVote workspace vote =
     setDoc
@@ -440,15 +473,21 @@ retractContinuationVote workspace userId =
         ]
 
 
-clearContinuationVotes : Maybe String -> List ContinuationVote -> Cmd msg
-clearContinuationVotes workspace votes =
-    deleteDocs
-        (List.map
-            (\vote ->
-                continuationVotePath workspace vote.userId
-            )
-            votes
-        )
+clearContinuationVotes : Maybe String -> Maybe (List ContinuationVote) -> Cmd msg
+clearContinuationVotes workspace maybeVotes =
+    case maybeVotes of
+        Nothing ->
+            Cmd.none
+
+        Just votes ->
+            deleteDocs
+                ([ continuationVoteActiveDocPath workspace ]
+                    ++ List.map
+                        (\vote ->
+                            continuationVotePath workspace vote.userId
+                        )
+                        votes
+                )
 
 
 continuationVotePath : Maybe String -> UserId -> Path
@@ -671,7 +710,7 @@ errorView maybeError =
 discussionView :
     Credentials a
     -> Maybe TopicWithVotes
-    -> List ContinuationVote
+    -> Maybe (List ContinuationVote)
     -> { b | now : Maybe Time.Posix, deadline : Maybe Time.Posix }
     -> String
     -> Html Msg
@@ -704,8 +743,7 @@ discussionView creds maybeDiscussedTopic continuationVotes times timerInput =
                         ]
                )
             ++ [ remainingTime creds times timerInput ]
-            ++ [ continuationVote creds.user continuationVotes
-               ]
+            ++ continuationVote creds continuationVotes
         )
 
 
@@ -760,7 +798,7 @@ remainingTimeDisplay times =
                             "Less than 1 minute left…"
 
                         else if differenceMinutes == 0 then
-                            "Time has run out. Do you want to stay with this topic or move on to the next?"
+                            "Time has run out."
 
                         else
                             String.fromInt differenceMinutes ++ " minutes left…"
@@ -896,55 +934,89 @@ discussedTopics model topics =
             ]
 
 
-continuationVote : Remote User -> List ContinuationVote -> Html Msg
-continuationVote remoteUser continuationVotes =
-    div []
-        (case remoteUser of
-            Loading ->
-                []
+continuationVote : Credentials a -> Maybe (List ContinuationVote) -> List (Html Msg)
+continuationVote creds maybeContinuationVotes =
+    case creds.user of
+        Loading ->
+            []
 
-            Got user ->
-                let
-                    ( moveOnVotes, remainingVotes ) =
-                        List.partition (\vote -> vote.vote == MoveOn) continuationVotes
+        Got user ->
+            let
+                maybeAdminButtons =
+                    if creds.isAdmin then
+                        case maybeContinuationVotes of
+                            Nothing ->
+                                [ button
+                                    [ onClick StartContinuationVote
+                                    , css [ buttonStyle ]
+                                    ]
+                                    [ text "Start vote" ]
+                                ]
 
-                    ( stayVotes, abstainVotes ) =
-                        List.partition (\vote -> vote.vote == Stay) remainingVotes
+                            Just votes ->
+                                [ button
+                                    [ onClick ClearContinuationVote
+                                    , css [ buttonStyle ]
+                                    ]
+                                    [ text "Clear vote" ]
+                                , div [] [ text ("There are " ++ String.fromInt (List.length votes) ++ " votes in total.") ]
+                                ]
 
-                    stayButton =
-                        voteButton user
-                            (List.map .userId stayVotes)
-                            { upvote = ContinuationVoteSent { userId = user.id, vote = Stay }
-                            , downvote = RemoveContinuationVote user.id
-                            }
-                            (\count -> text <| "Stay (" ++ String.fromInt count ++ ")")
+                    else
+                        []
 
-                    abstainButton =
-                        voteButton user
-                            (List.map .userId abstainVotes)
-                            { upvote = ContinuationVoteSent { userId = user.id, vote = Abstain }
-                            , downvote = RemoveContinuationVote user.id
-                            }
-                            (\count -> text <| "Abstain (" ++ String.fromInt count ++ ")")
+                maybeVoteButtons =
+                    case maybeContinuationVotes of
+                        Nothing ->
+                            []
 
-                    moveOnButton =
-                        voteButton user
-                            (List.map .userId moveOnVotes)
-                            { upvote = ContinuationVoteSent { userId = user.id, vote = MoveOn }
-                            , downvote = RemoveContinuationVote user.id
-                            }
-                            (\count -> text <| "Move on (" ++ String.fromInt count ++ ")")
-                in
-                [ div
-                    [ css
-                        [ Css.displayFlex
-                        , Css.flexDirection Css.row
-                        , Css.justifyContent Css.spaceBetween
-                        ]
-                    ]
-                    [ stayButton, abstainButton, moveOnButton ]
-                ]
-        )
+                        Just votes ->
+                            [ continuationVoteButtons user votes ]
+            in
+            maybeAdminButtons ++ maybeVoteButtons
+
+
+continuationVoteButtons : User -> List ContinuationVote -> Html Msg
+continuationVoteButtons user continuationVotes =
+    let
+        ( moveOnVotes, remainingVotes ) =
+            List.partition (\vote -> vote.vote == MoveOn) continuationVotes
+
+        ( stayVotes, abstainVotes ) =
+            List.partition (\vote -> vote.vote == Stay) remainingVotes
+
+        stayButton =
+            voteButton user
+                (List.map .userId stayVotes)
+                { upvote = ContinuationVoteSent { userId = user.id, vote = Stay }
+                , downvote = RemoveContinuationVote user.id
+                }
+                (\count -> text <| "Stay (" ++ String.fromInt count ++ ")")
+
+        abstainButton =
+            voteButton user
+                (List.map .userId abstainVotes)
+                { upvote = ContinuationVoteSent { userId = user.id, vote = Abstain }
+                , downvote = RemoveContinuationVote user.id
+                }
+                (\count -> text <| "Abstain (" ++ String.fromInt count ++ ")")
+
+        moveOnButton =
+            voteButton user
+                (List.map .userId moveOnVotes)
+                { upvote = ContinuationVoteSent { userId = user.id, vote = MoveOn }
+                , downvote = RemoveContinuationVote user.id
+                }
+                (\count -> text <| "Move on (" ++ String.fromInt count ++ ")")
+    in
+    div
+        [ css
+            [ Css.displayFlex
+            , Css.flexDirection Css.row
+            , Css.justifyContent Css.spaceBetween
+            ]
+        ]
+        [ stayButton, abstainButton, moveOnButton ]
 
 
 topicEntry : Remote User -> String -> Html Msg
@@ -1479,6 +1551,12 @@ discussionDeadlineDocPath workspace =
         |> prependWorkspace workspace
 
 
+continuationVoteActiveDocPath : Maybe String -> Path
+continuationVoteActiveDocPath workspace =
+    [ "discussion", "continuationVote" ]
+        |> prependWorkspace workspace
+
+
 continuationVoteCollectionPath : Maybe String -> Path
 continuationVoteCollectionPath workspace =
     [ "continuationVotes" ]
@@ -1507,6 +1585,7 @@ firestoreSubscriptionsCmd workspace =
         [ subscribe { kind = Collection, path = topicCollectionPath workspace, tag = TopicsTag }
         , subscribe { kind = Collection, path = voteCollectionPath workspace, tag = VotesTag }
         , subscribe { kind = Doc, path = inDiscussionDocPath workspace, tag = InDiscussionTag }
+        , subscribe { kind = Doc, path = continuationVoteActiveDocPath workspace, tag = ContinuationVoteActiveTag }
         , subscribe { kind = Collection, path = continuationVoteCollectionPath workspace, tag = ContinuationVotesTag }
         , subscribe { kind = Collection, path = discussedCollectionPath workspace, tag = DiscussedTag }
         , subscribe { kind = Doc, path = discussionDeadlineDocPath workspace, tag = DeadlineTag }
@@ -1588,6 +1667,7 @@ type SubscriptionTag
     = TopicsTag
     | VotesTag
     | InDiscussionTag
+    | ContinuationVoteActiveTag
     | ContinuationVotesTag
     | DiscussedTag
     | DeadlineTag
@@ -1606,6 +1686,9 @@ encodeSubscriptionTag tag =
 
                 InDiscussionTag ->
                     "inDiscussion"
+
+                ContinuationVoteActiveTag ->
+                    "continuationVoteActive"
 
                 ContinuationVotesTag ->
                     "continuationVotes"
@@ -1633,6 +1716,9 @@ subscriptionTagDecoder =
 
                     "inDiscussion" ->
                         Decode.succeed InDiscussionTag
+
+                    "continuationVoteActive" ->
+                        Decode.succeed ContinuationVoteActiveTag
 
                     "continuationVotes" ->
                         Decode.succeed ContinuationVotesTag
@@ -1679,6 +1765,10 @@ parseFirestoreSubscription value =
                                         InDiscussionTag ->
                                             inDiscussionDecoder
                                                 |> Decode.map TopicInDiscussionReceived
+
+                                        ContinuationVoteActiveTag ->
+                                            continuationVoteActiveDecoder
+                                                |> Decode.map ContinuationVoteActiveReceived
 
                                         ContinuationVotesTag ->
                                             continuationVotesDecoder
@@ -1836,6 +1926,24 @@ votesDecoder =
 inDiscussionDecoder : Decoder (Maybe TopicId)
 inDiscussionDecoder =
     Decode.maybe (Decode.field "topicId" Decode.string)
+
+
+continuationVoteActiveDecoder : Decoder Bool
+continuationVoteActiveDecoder =
+    Decode.maybe (Decode.field "isActive" Decode.bool)
+        |> Decode.map
+            (\maybeIsActive ->
+                let
+                    isActive =
+                        maybeIsActive |> Maybe.withDefault False
+                in
+                isActive
+            )
+
+
+encodeContinuationVoteActive : Bool -> Encode.Value
+encodeContinuationVoteActive isActive =
+    Encode.object [ ( "isActive", Encode.bool isActive ) ]
 
 
 continuationVotesDecoder : Decoder (List ContinuationVote)
