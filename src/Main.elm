@@ -576,11 +576,7 @@ view model =
                     , Css.alignItems Css.center
                     ]
                 ]
-                [ img
-                    [ src "./logo.svg"
-                    , css [ Css.maxHeight (rem 2), Css.marginRight (rem 1) ]
-                    ]
-                    []
+                [ logo
                 , h1 [ css [ Css.margin zero ] ] [ text heading ]
                 ]
              ]
@@ -591,6 +587,22 @@ view model =
             )
         , topicsToVote model topicList (sortBarView model.votes model.topics)
         ]
+
+
+logo : Html Msg
+logo =
+    img
+        [ src "./logo.svg"
+        , Attributes.width 512
+        , Attributes.height 512
+        , Attributes.alt ""
+        , css
+            [ Css.maxHeight (rem 2)
+            , Css.width auto
+            , Css.marginRight (rem 1)
+            ]
+        ]
+        []
 
 
 limitWidth : Css.Style
