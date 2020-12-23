@@ -15,8 +15,8 @@ import Json.Decode.Pipeline
 import Json.Encode as Encode
 import List.Extra as List
 import Remote exposing (Remote(..))
+import SortedDict exposing (SortedDict)
 import Time
-import TopicList exposing (Topic, TopicId, TopicList, VoteCountMap)
 
 
 main =
@@ -55,6 +55,66 @@ type alias Model =
     }
 
 
+type alias TopicList =
+    SortedDict TopicId Topic
+
+
+type alias TopicId =
+    String
+
+
+type alias Topic =
+    { topic : String
+    , creator : String
+    , createdAt : Maybe Time.Posix
+    }
+
+
+type alias VoteCountMap =
+    TopicId -> Int
+
+
+sortTopicList : VoteCountMap -> TopicList -> TopicList
+sortTopicList voteCountMap oldTopics =
+    SortedDict.stableSortWith (topicListSort voteCountMap) oldTopics
+
+
+isTopicListSorted : VoteCountMap -> TopicList -> Bool
+isTopicListSorted voteCountMap topics =
+    let
+        sorted =
+            sortTopicList voteCountMap topics
+    in
+    sorted == topics
+
+
+topicListSort : VoteCountMap -> (( TopicId, Topic ) -> ( TopicId, Topic ) -> Order)
+topicListSort voteCountMap =
+    \( id1, _ ) ( id2, _ ) ->
+        let
+            votes1 =
+                voteCountMap id1
+
+            votes2 =
+                voteCountMap id2
+        in
+        compare votes1 votes2
+            |> inverseOrder
+
+
+inverseOrder : Order -> Order
+inverseOrder order =
+    case order of
+        EQ ->
+            EQ
+
+        LT ->
+            GT
+
+        GT ->
+            LT
+
+
 type alias Votes =
     Dict TopicId (List UserId)
 
@@ -63,9 +123,9 @@ type alias Vote =
     { userId : UserId, topicId : TopicId }
 
 
-voteFrom : User -> Topic -> Vote
-voteFrom user topic =
-    { userId = user.id, topicId = topic.id }
+voteFrom : User -> TopicId -> Vote
+voteFrom user topicId =
+    { userId = user.id, topicId = topicId }
 
 
 type alias ContinuationVote =
@@ -154,7 +214,7 @@ init flags =
 type Msg
     = UserReceived (Result Decode.Error User)
     | DecodeError Decode.Error
-    | TopicsReceived (List Topic)
+    | TopicChangesReceived TopicChanges
     | VotesReceived Votes
     | TopicInDiscussionReceived (Maybe TopicId)
     | ContinuationVoteActiveReceived Bool
@@ -167,8 +227,8 @@ type Msg
     | FinishDiscussionClicked
     | VoteAgainClicked
     | SortTopics
-    | Upvote User Topic
-    | RemoveUpvote User Topic
+    | Upvote User TopicId
+    | RemoveUpvote User TopicId
     | StartContinuationVote
     | ClearContinuationVote
     | ContinuationVoteSent ContinuationVote
@@ -200,8 +260,8 @@ update msg model =
         DecodeError error ->
             ( { model | error = Just (processParsingError error) }, Cmd.none )
 
-        TopicsReceived topics ->
-            ( { model | topics = updateTopicList voteCountMap topics model.topics }, Cmd.none )
+        TopicChangesReceived changes ->
+            ( { model | topics = updateTopicList voteCountMap changes model.topics }, Cmd.none )
 
         VotesReceived votes ->
             let
@@ -214,7 +274,7 @@ update msg model =
                                 -- If the votes are coming in for the first time, immediately sort the topics.
                                 , topics =
                                     Remote.map
-                                        (TopicList.sort <| voteCountMapFromVotes <| Got votes)
+                                        (sortTopicList <| voteCountMapFromVotes <| Got votes)
                                         model.topics
                             }
 
@@ -312,13 +372,13 @@ update msg model =
             ( model, retractContinuationVote model.workspace userId )
 
         SortTopics ->
-            ( { model | topics = Remote.map (TopicList.sort voteCountMap) model.topics }, Cmd.none )
+            ( { model | topics = Remote.map (sortTopicList voteCountMap) model.topics }, Cmd.none )
 
-        Upvote user topic ->
-            ( model, submitVote model.workspace (voteFrom user topic) )
+        Upvote user topicId ->
+            ( model, submitVote model.workspace (voteFrom user topicId) )
 
-        RemoveUpvote user topic ->
-            ( model, retractVote model.workspace (voteFrom user topic) )
+        RemoveUpvote user topicId ->
+            ( model, retractVote model.workspace (voteFrom user topicId) )
 
         NewTopicInputChanged value ->
             ( { model | newTopicInput = value }, Cmd.none )
@@ -379,24 +439,29 @@ processFirestoreError info =
 
 
 voteCountMapFromVotes : Remote Votes -> VoteCountMap
-voteCountMapFromVotes remoteVotes topic =
-    case remoteVotes of
+voteCountMapFromVotes remoteVotes =
+    \topicId ->
+        case remoteVotes of
+            Loading ->
+                0
+
+            Got votes ->
+                Dict.get topicId votes |> Maybe.withDefault [] |> List.length
+
+
+updateTopicList : VoteCountMap -> TopicChanges -> Remote TopicList -> Remote TopicList
+updateTopicList voteCountMap changes remoteTopics =
+    (case remoteTopics of
         Loading ->
-            0
+            List.foldl (\( id, topic ) topics -> SortedDict.insert id topic topics) SortedDict.empty changes.added
+                |> sortTopicList voteCountMap
 
-        Got votes ->
-            Dict.get topic.id votes |> Maybe.withDefault [] |> List.length
-
-
-updateTopicList : VoteCountMap -> List Topic -> Remote TopicList -> Remote TopicList
-updateTopicList voteCountMap newTopics currentTopics =
-    (case currentTopics of
-        Loading ->
-            TopicList.from newTopics
-                |> TopicList.sort voteCountMap
-
-        Got sortedList ->
-            TopicList.update voteCountMap newTopics sortedList
+        Got currentTopics ->
+            let
+                topicsRemoved =
+                    List.foldl (\id topics -> SortedDict.remove id topics) currentTopics changes.removed
+            in
+            List.foldl (\( id, topic ) topics -> SortedDict.insert id topic topics) topicsRemoved (changes.added ++ changes.modified)
     )
         |> Got
 
@@ -615,9 +680,11 @@ limitWidth =
 
 
 type alias TopicWithVotes =
-    { topic : Topic
-    , votes : List UserId
-    }
+    ( TopicId
+    , { topic : Topic
+      , votes : List UserId
+      }
+    )
 
 
 processTopics :
@@ -638,26 +705,28 @@ processTopics model =
                 topicsWithVotes =
                     Maybe.map
                         (\votes ->
-                            TopicList.toList topics
+                            SortedDict.toList topics
                                 |> List.map
-                                    (\topic ->
-                                        { topic = topic
-                                        , votes =
-                                            Dict.get topic.id votes
-                                                |> Maybe.withDefault []
-                                        }
+                                    (\( id, topic ) ->
+                                        ( id
+                                        , { topic = topic
+                                          , votes =
+                                                Dict.get id votes
+                                                    |> Maybe.withDefault []
+                                          }
+                                        )
                                     )
                         )
                         (Remote.toMaybe model.votes)
                         |> Maybe.withDefault []
 
                 ( maybeInDiscussion, remainingTopics ) =
-                    Maybe.map (\topicId -> extract (\entry -> entry.topic.id == topicId) topicsWithVotes)
+                    Maybe.map (\topicId -> extract (\( id, entry ) -> id == topicId) topicsWithVotes)
                         model.inDiscussion
                         |> Maybe.withDefault ( Nothing, topicsWithVotes )
 
                 ( discussed, toVote ) =
-                    List.partition (\t -> List.member t.topic.id model.discussed) remainingTopics
+                    List.partition (\( id, t ) -> List.member id model.discussed) remainingTopics
             in
             ( maybeInDiscussion, Got toVote, discussed )
 
@@ -1181,7 +1250,7 @@ sortBarView votes remoteTopics =
         showButton =
             case remoteTopics of
                 Got topics ->
-                    if not (TopicList.isSorted voteCountMap topics) then
+                    if not (isTopicListSorted voteCountMap topics) then
                         True
 
                     else
@@ -1220,7 +1289,7 @@ type alias Credentials a =
 
 
 topicToDiscussCard : Credentials a -> TopicWithVotes -> Html Msg
-topicToDiscussCard creds entry =
+topicToDiscussCard creds ( topicId, entry ) =
     let
         voteCount =
             List.length entry.votes
@@ -1254,7 +1323,7 @@ topicToDiscussCard creds entry =
 
         maybeDeleteButton =
             if creds.isAdmin then
-                [ deleteButton entry.topic.id
+                [ deleteButton topicId
                 ]
 
             else
@@ -1270,11 +1339,11 @@ topicToDiscussCard creds entry =
 
 
 topicToVoteCard : Credentials a -> TopicWithVotes -> Html Msg
-topicToVoteCard creds entry =
+topicToVoteCard creds ( topicId, entry ) =
     let
         maybeDiscussButton =
             if creds.isAdmin then
-                [ button [ onClick (Discuss entry.topic.id), css [ buttonStyle ] ] [ text "Discuss" ] ]
+                [ button [ onClick (Discuss topicId), css [ buttonStyle ] ] [ text "Discuss" ] ]
 
             else
                 []
@@ -1284,13 +1353,13 @@ topicToVoteCard creds entry =
 
         maybeDeleteButton =
             if mayMod then
-                [ deleteButton entry.topic.id ]
+                [ deleteButton topicId ]
 
             else
                 []
     in
     topicCard
-        (maybeTopicVoteButton creds.user entry
+        (maybeTopicVoteButton creds.user ( topicId, entry )
             ++ maybeDiscussButton
             ++ maybeDeleteButton
         )
@@ -1298,7 +1367,7 @@ topicToVoteCard creds entry =
 
 
 finishedTopicCard : Credentials a -> TopicWithVotes -> Html Msg
-finishedTopicCard creds entry =
+finishedTopicCard creds ( topicId, entry ) =
     let
         voteCount =
             List.length entry.votes
@@ -1308,7 +1377,7 @@ finishedTopicCard creds entry =
 
         maybeDeleteButton =
             if mayMod then
-                [ deleteButton entry.topic.id ]
+                [ deleteButton topicId ]
 
             else
                 []
@@ -1321,7 +1390,7 @@ finishedTopicCard creds entry =
 
 
 maybeTopicVoteButton : Remote User -> TopicWithVotes -> List (Html Msg)
-maybeTopicVoteButton remoteUser entry =
+maybeTopicVoteButton remoteUser ( topicId, entry ) =
     case remoteUser of
         Loading ->
             []
@@ -1329,10 +1398,10 @@ maybeTopicVoteButton remoteUser entry =
         Got user ->
             let
                 upvoteMsg =
-                    Upvote user entry.topic
+                    Upvote user topicId
 
                 downvoteMsg =
-                    RemoveUpvote user entry.topic
+                    RemoveUpvote user topicId
             in
             [ voteButton user
                 entry.votes
@@ -1594,7 +1663,7 @@ prependWorkspace maybeWorkspace path =
 firestoreSubscriptionsCmd : Maybe String -> Cmd Msg
 firestoreSubscriptionsCmd workspace =
     Cmd.batch
-        [ subscribe { kind = Collection, path = topicCollectionPath workspace, tag = TopicsTag }
+        [ subscribe { kind = CollectionChanges, path = topicCollectionPath workspace, tag = TopicChangesTag }
         , subscribe { kind = Collection, path = voteCollectionPath workspace, tag = VotesTag }
         , subscribe { kind = Doc, path = inDiscussionDocPath workspace, tag = InDiscussionTag }
         , subscribe { kind = Doc, path = continuationVoteActiveDocPath workspace, tag = ContinuationVoteActiveTag }
@@ -1631,6 +1700,7 @@ encodeSubscriptionInfo info =
 
 type SubscriptionKind
     = Collection
+    | CollectionChanges
     | Doc
 
 
@@ -1641,6 +1711,9 @@ encodeSubscriptionKind kind =
             case kind of
                 Collection ->
                     "collection"
+
+                CollectionChanges ->
+                    "collectionChanges"
 
                 Doc ->
                     "doc"
@@ -1656,6 +1729,9 @@ subscriptionKindDecoder =
                 case raw of
                     "collection" ->
                         Decode.succeed Collection
+
+                    "collectionChanges" ->
+                        Decode.succeed CollectionChanges
 
                     "doc" ->
                         Decode.succeed Doc
@@ -1676,7 +1752,7 @@ encodePath path =
 
 
 type SubscriptionTag
-    = TopicsTag
+    = TopicChangesTag
     | VotesTag
     | InDiscussionTag
     | ContinuationVoteActiveTag
@@ -1690,8 +1766,8 @@ encodeSubscriptionTag tag =
     let
         raw =
             case tag of
-                TopicsTag ->
-                    "topics"
+                TopicChangesTag ->
+                    "topicChanges"
 
                 VotesTag ->
                     "votes"
@@ -1720,8 +1796,8 @@ subscriptionTagDecoder =
         |> Decode.andThen
             (\raw ->
                 case raw of
-                    "topics" ->
-                        Decode.succeed TopicsTag
+                    "topicChanges" ->
+                        Decode.succeed TopicChangesTag
 
                     "votes" ->
                         Decode.succeed VotesTag
@@ -1766,9 +1842,9 @@ parseFirestoreSubscription value =
                                 dataDecoder : Decoder Msg
                                 dataDecoder =
                                     case tag of
-                                        TopicsTag ->
-                                            topicsDecoder
-                                                |> Decode.map TopicsReceived
+                                        TopicChangesTag ->
+                                            topicChangesDecoder
+                                                |> Decode.map TopicChangesReceived
 
                                         VotesTag ->
                                             votesDecoder
@@ -1805,6 +1881,41 @@ parseFirestoreSubscription value =
 
         Err error ->
             DecodeError error
+
+
+changeDecoder : (ChangeType -> String -> value -> a) -> Decoder value -> Decoder (List a)
+changeDecoder mapping valueDecoder =
+    Decode.list <|
+        Decode.map3 mapping
+            (Decode.field "changeType" changeTypeDecoder)
+            (Decode.field "id" Decode.string)
+            valueDecoder
+
+
+type ChangeType
+    = Added
+    | Modified
+    | Removed
+
+
+changeTypeDecoder : Decoder ChangeType
+changeTypeDecoder =
+    Decode.string
+        |> Decode.andThen
+            (\raw ->
+                case raw of
+                    "added" ->
+                        Decode.succeed Added
+
+                    "modified" ->
+                        Decode.succeed Modified
+
+                    "removed" ->
+                        Decode.succeed Removed
+
+                    _ ->
+                        Decode.fail "Invalid change type"
+            )
 
 
 type alias InsertDocInfo =
@@ -1860,22 +1971,57 @@ port receiveError_ : (Encode.Value -> msg) -> Sub msg
 -- DECODERS
 
 
-topicsDecoder : Decoder (List Topic)
-topicsDecoder =
-    Decode.list
-        (Decode.map4
-            (\id topic userId createdAt ->
-                { id = id
-                , topic = topic
-                , creator = userId
-                , createdAt = createdAt
-                }
+topicChangesDecoder : Decoder TopicChanges
+topicChangesDecoder =
+    changeDecoder
+        (\changeType id topic ->
+            ( changeType
+            , id
+            , topic
             )
-            (Decode.field "id" Decode.string)
-            (dataField "topic" Decode.string)
-            (dataField "userId" Decode.string)
-            (dataField "createdAt" (Decode.nullable timestampDecoder))
         )
+        topicDecoder
+        |> Decode.map
+            (List.foldl
+                (\( changeType, id, topic ) changes ->
+                    case changeType of
+                        Added ->
+                            { changes | added = changes.added ++ [ ( id, topic ) ] }
+
+                        Modified ->
+                            { changes | modified = changes.modified ++ [ ( id, topic ) ] }
+
+                        Removed ->
+                            { changes | removed = changes.removed ++ [ id ] }
+                )
+                emptyChanges
+            )
+
+
+type alias TopicChanges =
+    { added : List ( TopicId, Topic )
+    , modified : List ( TopicId, Topic )
+    , removed : List TopicId
+    }
+
+
+emptyChanges : TopicChanges
+emptyChanges =
+    { added = [], modified = [], removed = [] }
+
+
+topicDecoder : Decoder Topic
+topicDecoder =
+    Decode.map3
+        (\topic userId createdAt ->
+            { topic = topic
+            , creator = userId
+            , createdAt = createdAt
+            }
+        )
+        (dataField "topic" Decode.string)
+        (dataField "userId" Decode.string)
+        (dataField "createdAt" (Decode.nullable timestampDecoder))
 
 
 dataField : String -> Decoder a -> Decoder a

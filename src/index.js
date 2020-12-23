@@ -52,6 +52,8 @@ firebase.auth().signInAnonymously()
 app.ports.subscribe_.subscribe(info => {
   if (info.kind === "collection") {
     subscribeToCollection(info.path, info.tag)
+  } else if (info.kind === "collectionChanges") {
+    subscribeToCollectionChanges(info.path, info.tag)
   } else if (info.kind === "doc") {
     subscribeToDoc(info.path, info.tag)
   } else {
@@ -76,6 +78,28 @@ function subscribeToCollection(path, tag) {
     app.ports.receive_.send({
       tag: tag,
       data: docs,
+    });
+  })
+}
+
+function subscribeToCollectionChanges(path, tag) {
+  console.log(`Subscribing to collection changes at ${path}.`);
+
+  db.collection(path).onSnapshot(snapshot => {
+    const changes = [];
+
+    snapshot.docChanges().forEach(change => {
+      changes.push({
+        changeType: change.type,
+        id: change.doc.id,
+        data: change.doc.data()
+      });
+    });
+
+    console.log(`Received new changes for collection ${tag}:\n`, changes);
+    app.ports.receive_.send({
+      tag: tag,
+      data: changes,
     });
   })
 }
