@@ -324,9 +324,14 @@ update msg model =
 
         SaveTopic user ->
             ( { model | newTopicInput = "" }
-            , submitTopic model.workspace
-                model.timestampField
-                { topic = model.newTopicInput, userId = user.id }
+            , case model.newTopicInput of
+                "" ->
+                    Cmd.none
+
+                topic ->
+                    submitTopic model.workspace
+                        model.timestampField
+                        { topic = topic, userId = user.id }
             )
 
         DeleteTopic id ->
