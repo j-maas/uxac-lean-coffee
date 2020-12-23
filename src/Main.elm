@@ -10,6 +10,7 @@ import Html as PlainHtml
 import Html.Styled as Html exposing (Html, button, div, form, h1, h2, img, input, label, li, ol, p, span, text, textarea)
 import Html.Styled.Attributes as Attributes exposing (css, placeholder, src, type_, value)
 import Html.Styled.Events exposing (onClick, onInput, onSubmit)
+import Html.Styled.Lazy as Html
 import Json.Decode as Decode exposing (Decoder)
 import Json.Decode.Pipeline
 import Json.Encode as Encode
@@ -1529,15 +1530,19 @@ newTopic user currentInput =
         ]
         [ label [ css [ Css.displayFlex, Css.flexDirection Css.column, Css.width (pct 100) ] ]
             [ text "Add a topic"
-            , input
-                [ value currentInput
-                , onInput NewTopicInputChanged
-                , css
-                    [ inputStyle
-                    , Css.marginTop (rem 0.3)
-                    ]
-                ]
-                []
+            , Html.lazy
+                (\ci ->
+                    input
+                        [ value ci
+                        , onInput NewTopicInputChanged
+                        , css
+                            [ inputStyle
+                            , Css.marginTop (rem 0.3)
+                            ]
+                        ]
+                        []
+                )
+                currentInput
             ]
         , input [ type_ "submit", value "Submit", css [ buttonStyle, Css.marginTop (rem 1) ] ] []
         ]
