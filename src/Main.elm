@@ -35,7 +35,7 @@ main =
 type alias Model =
     { inDiscussion : Maybe TopicId
     , topics : Remote TopicList
-    , discussed : List TopicId
+    , discussed : List ( TopicId, Maybe Time.Posix )
     , votes : Remote Votes
     , continuationVotes : Maybe (List ContinuationVote)
     , deadline : Maybe Time.Posix
@@ -219,7 +219,7 @@ type Msg
     | TopicInDiscussionReceived (Maybe TopicId)
     | ContinuationVoteActiveReceived Bool
     | ContinuationVotesReceived (List ContinuationVote)
-    | DiscussedTopicsReceived (List TopicId)
+    | DiscussedTopicsReceived (List ( TopicId, Maybe Time.Posix ))
     | DeadlineReceived (Maybe Time.Posix)
     | SaveTopic User
     | DeleteTopic TopicId
@@ -346,7 +346,7 @@ update msg model =
                     let
                         cmds =
                             Cmd.batch
-                                [ finishDiscussion model.workspace inDiscussion
+                                [ finishDiscussion model.workspace inDiscussion model.timestampField
                                 , clearContinuationVotes model.workspace model.continuationVotes
                                 , clearDeadline model.workspace
                                 ]
@@ -573,13 +573,13 @@ submitTopicInDiscussion workspace topicId =
         }
 
 
-finishDiscussion : Maybe String -> TopicId -> Cmd msg
-finishDiscussion workspace topicId =
+finishDiscussion : Maybe String -> TopicId -> TimestampField -> Cmd msg
+finishDiscussion workspace topicId timestamp =
     Cmd.batch
         [ deleteDocs [ inDiscussionDocPath workspace ]
         , insertDoc
             { collectionPath = discussedCollectionPath workspace
-            , doc = topicIdEncoder topicId
+            , doc = discussedTopicEncoder topicId timestamp
             }
         ]
 
@@ -623,7 +623,7 @@ view model =
                         ""
                    )
 
-        ( inDiscussion, topicList, discussedList ) =
+        { inDiscussion, topicList, discussedList } =
             processTopics model
     in
     div
@@ -696,33 +696,33 @@ processTopics :
     { a
         | inDiscussion : Maybe TopicId
         , topics : Remote TopicList
-        , discussed : List TopicId
+        , discussed : List ( TopicId, Maybe Time.Posix )
         , votes : Remote Votes
     }
-    -> ( Maybe TopicWithVotes, Remote (List TopicWithVotes), List TopicWithVotes )
+    -> { inDiscussion : Maybe TopicWithVotes, topicList : Remote (List TopicWithVotes), discussedList : List TopicWithVotes }
 processTopics model =
     case model.topics of
         Loading ->
-            ( Nothing, Loading, [] )
+            { inDiscussion = Nothing, topicList = Loading, discussedList = [] }
 
         Got topics ->
             let
                 topicsWithVotes =
-                    Maybe.map
-                        (\votes ->
-                            SortedDict.toList topics
-                                |> List.map
-                                    (\( id, topic ) ->
-                                        ( id
-                                        , { topic = topic
-                                          , votes =
-                                                Dict.get id votes
-                                                    |> Maybe.withDefault []
-                                          }
+                    Remote.toMaybe model.votes
+                        |> Maybe.map
+                            (\votes ->
+                                SortedDict.toList topics
+                                    |> List.map
+                                        (\( id, topic ) ->
+                                            ( id
+                                            , { topic = topic
+                                              , votes =
+                                                    Dict.get id votes
+                                                        |> Maybe.withDefault []
+                                              }
+                                            )
                                         )
-                                    )
-                        )
-                        (Remote.toMaybe model.votes)
+                            )
                         |> Maybe.withDefault []
 
                 ( maybeInDiscussion, remainingTopics ) =
@@ -730,10 +730,38 @@ processTopics model =
                         model.inDiscussion
                         |> Maybe.withDefault ( Nothing, topicsWithVotes )
 
-                ( discussed, toVote ) =
-                    List.partition (\( id, t ) -> List.member id model.discussed) remainingTopics
+                discussedDict =
+                    Dict.fromList model.discussed
+
+                ( discussedUnsorted, toVote ) =
+                    List.foldl
+                        (\( id, t ) ( currentDiscussed, currentToVote ) ->
+                            case Dict.get id discussedDict of
+                                Just time ->
+                                    ( ( ( id, t ), time ) :: currentDiscussed, currentToVote )
+
+                                Nothing ->
+                                    ( currentDiscussed, ( id, t ) :: currentToVote )
+                        )
+                        ( [], [] )
+                        remainingTopics
+
+                discussed =
+                    let
+                        -- This is the biggest integer we can have. (See https://package.elm-lang.org/packages/elm/core/latest/Basics#Int)
+                        maxInt =
+                            (2 ^ 53) - 1
+                    in
+                    List.sortBy
+                        (\( _, time ) ->
+                            Maybe.map Time.posixToMillis time
+                                |> Maybe.withDefault maxInt
+                        )
+                        discussedUnsorted
+                        |> List.reverse
+                        |> List.map Tuple.first
             in
-            ( maybeInDiscussion, Got toVote, discussed )
+            { inDiscussion = maybeInDiscussion, topicList = Got toVote, discussedList = discussed }
 
 
 extract : (a -> Bool) -> List a -> ( Maybe a, List a )
@@ -2123,9 +2151,13 @@ continuationVotesDecoder =
         )
 
 
-discussedDecoder : Decoder (List TopicId)
+discussedDecoder : Decoder (List ( TopicId, Maybe Time.Posix ))
 discussedDecoder =
-    Decode.list (dataField "topicId" Decode.string)
+    Decode.list
+        (Decode.map2 Tuple.pair
+            (dataField "topicId" Decode.string)
+            (dataField "finishedAt" (Decode.maybe timestampDecoder))
+        )
 
 
 deadlineDecoder : Decoder (Maybe Time.Posix)
@@ -2179,6 +2211,14 @@ topicIdEncoder : TopicId -> Encode.Value
 topicIdEncoder topicId =
     Encode.object
         [ ( "topicId", Encode.string topicId )
+        ]
+
+
+discussedTopicEncoder : TopicId -> TimestampField -> Encode.Value
+discussedTopicEncoder id timestamp =
+    Encode.object
+        [ ( "topicId", Encode.string id )
+        , ( "finishedAt", timestamp )
         ]
 
 
