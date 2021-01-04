@@ -741,7 +741,7 @@ processTopics model =
                                     ( ( ( id, t ), time ) :: currentDiscussed, currentToVote )
 
                                 Nothing ->
-                                    ( currentDiscussed, ( id, t ) :: currentToVote )
+                                    ( currentDiscussed, currentToVote ++ [ ( id, t ) ] )
                         )
                         ( [], [] )
                         remainingTopics
