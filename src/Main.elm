@@ -1198,7 +1198,24 @@ topicsToVote creds remoteTopics toolbar =
                     , Css.marginRight (rem 1)
                     ]
                 ]
-                [ text "Suggested topics" ]
+                [ let
+                    unreadCount =
+                        Remote.toMaybe remoteTopics
+                            |> Maybe.map
+                                (List.filter (\( _, entry ) -> entry.mark == Unread)
+                                    >> List.length
+                                )
+                            |> Maybe.withDefault 0
+
+                    unread =
+                        if unreadCount > 0 then
+                            " (" ++ String.fromInt unreadCount ++ " unread)"
+
+                        else
+                            ""
+                  in
+                  text ("Suggested topics" ++ unread)
+                ]
             , toolbar
             ]
         , case remoteTopics of
