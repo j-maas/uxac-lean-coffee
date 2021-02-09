@@ -616,9 +616,6 @@ clearDeadline workspace =
 view : Model -> Html Msg
 view model =
     let
-        voteCountMap =
-            voteCountMapFromVotes model.votes
-
         heading =
             "UXAC Lean Coffee"
                 ++ (if model.isAdmin then
@@ -634,6 +631,7 @@ view model =
     div
         [ css
             [ bodyFont
+            , Global.descendants [ Global.h2 [ headingStyle ] ]
             , Css.margin2 zero auto
             ]
         ]
@@ -687,6 +685,11 @@ limitWidth =
         , Css.marginLeft auto
         , Css.marginRight auto
         ]
+
+
+headingStyle : Css.Style
+headingStyle =
+    Css.fontSize (rem 1.2)
 
 
 type alias TopicWithVotes =
