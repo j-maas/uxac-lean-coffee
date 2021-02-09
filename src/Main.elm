@@ -6,15 +6,14 @@ import Css.Animations as Animations
 import Css.Global as Global
 import Css.Media as Media
 import Dict exposing (Dict)
-import Html as PlainHtml
-import Html.Styled as Html exposing (Html, button, div, form, h1, h2, img, input, label, li, ol, p, span, text, textarea)
-import Html.Styled.Attributes as Attributes exposing (css, placeholder, src, type_, value)
-import Html.Styled.Events exposing (onClick, onInput, onSubmit)
+import Html.Styled as Html exposing (Attribute, Html, button, div, form, h1, h2, img, input, label, li, ol, span, text)
+import Html.Styled.Attributes as Attributes exposing (css, src, type_, value)
+import Html.Styled.Events exposing (on, onClick, onInput, onMouseEnter, onSubmit)
 import Json.Decode as Decode exposing (Decoder)
-import Json.Decode.Pipeline
 import Json.Encode as Encode
 import List.Extra as List
 import Remote exposing (Remote(..))
+import Set exposing (Set)
 import SortedDict exposing (SortedDict)
 import Time
 
@@ -35,6 +34,7 @@ main =
 type alias Model =
     { inDiscussion : Maybe TopicId
     , topics : Remote TopicList
+    , readTopics : Set TopicId
     , discussed : List ( TopicId, Maybe Time.Posix )
     , votes : Remote Votes
     , continuationVotes : Maybe (List ContinuationVote)
@@ -190,6 +190,7 @@ init flags =
     in
     ( { inDiscussion = Nothing
       , topics = Loading
+      , readTopics = Set.empty
       , discussed = []
       , votes = Loading
       , continuationVotes = Nothing
@@ -221,6 +222,7 @@ type Msg
     | ContinuationVotesReceived (List ContinuationVote)
     | DiscussedTopicsReceived (List ( TopicId, Maybe Time.Posix ))
     | DeadlineReceived (Maybe Time.Posix)
+    | Read TopicId
     | SaveTopic User
     | DeleteTopic TopicId
     | Discuss TopicId
@@ -321,6 +323,9 @@ update msg model =
 
         DismissError ->
             ( { model | error = Nothing }, Cmd.none )
+
+        Read topicId ->
+            ( { model | readTopics = Set.insert topicId model.readTopics }, Cmd.none )
 
         SaveTopic user ->
             ( { model | newTopicInput = "" }
@@ -687,19 +692,30 @@ limitWidth =
 type alias TopicWithVotes =
     ( TopicId
     , { topic : Topic
+      , mark : Mark
       , votes : List UserId
       }
     )
+
+
+type Mark
+    = Unread
+    | NoMark
 
 
 processTopics :
     { a
         | inDiscussion : Maybe TopicId
         , topics : Remote TopicList
+        , readTopics : Set TopicId
         , discussed : List ( TopicId, Maybe Time.Posix )
         , votes : Remote Votes
     }
-    -> { inDiscussion : Maybe TopicWithVotes, topicList : Remote (List TopicWithVotes), discussedList : List TopicWithVotes }
+    ->
+        { inDiscussion : Maybe TopicWithVotes
+        , topicList : Remote (List TopicWithVotes)
+        , discussedList : List TopicWithVotes
+        }
 processTopics model =
     case model.topics of
         Loading ->
@@ -714,11 +730,20 @@ processTopics model =
                                 SortedDict.toList topics
                                     |> List.map
                                         (\( id, topic ) ->
+                                            let
+                                                mark =
+                                                    if Set.member id model.readTopics then
+                                                        NoMark
+
+                                                    else
+                                                        Unread
+                                            in
                                             ( id
                                             , { topic = topic
                                               , votes =
                                                     Dict.get id votes
                                                         |> Maybe.withDefault []
+                                              , mark = mark
                                               }
                                             )
                                         )
@@ -761,7 +786,10 @@ processTopics model =
                         |> List.reverse
                         |> List.map Tuple.first
             in
-            { inDiscussion = maybeInDiscussion, topicList = Got toVote, discussedList = discussed }
+            { inDiscussion = maybeInDiscussion
+            , topicList = Got toVote
+            , discussedList = discussed
+            }
 
 
 extract : (a -> Bool) -> List a -> ( Maybe a, List a )
@@ -848,7 +876,8 @@ discussionView creds maybeDiscussedTopic continuationVotes times timerInput =
                         [ div
                             [ css [ Css.opacity (num 0.5) ]
                             ]
-                            [ card
+                            [ card []
+                                []
                                 [ div [ css [ Css.width (pct 100), Css.minHeight (rem 5) ] ]
                                     [ text "Currently there is no topic in discussion. Vote for one below."
                                     ]
@@ -1363,6 +1392,8 @@ topicToDiscussCard creds ( topicId, entry ) =
                 []
     in
     topicCard
+        []
+        []
         ([ votesIndicator voteCount ]
             ++ maybeFinishButton
             ++ maybeVoteAgainButton
@@ -1390,8 +1421,32 @@ topicToVoteCard creds ( topicId, entry ) =
 
             else
                 []
+
+        styles =
+            case entry.mark of
+                Unread ->
+                    let
+                        borderWidth =
+                            1
+                    in
+                    [ Css.border3 (px borderWidth) Css.solid (Css.hsl primaryHue 1 0.6)
+                    , Css.margin (px -borderWidth)
+                    ]
+
+                _ ->
+                    []
+
+        attributes =
+            case entry.mark of
+                Unread ->
+                    [ onMouseEnter (Read topicId), on "touchstart" (Decode.succeed <| Read topicId) ]
+
+                _ ->
+                    []
     in
     topicCard
+        styles
+        attributes
         (maybeTopicVoteButton creds.user ( topicId, entry )
             ++ maybeDiscussButton
             ++ maybeDeleteButton
@@ -1416,6 +1471,8 @@ finishedTopicCard creds ( topicId, entry ) =
                 []
     in
     topicCard
+        []
+        []
         ([ votesIndicator voteCount ]
             ++ maybeDeleteButton
         )
@@ -1515,9 +1572,11 @@ mayModify creds creator =
                 user.id == creator
 
 
-topicCard : List (Html Msg) -> String -> Html Msg
-topicCard buttons topic =
+topicCard : List Css.Style -> List (Attribute Msg) -> List (Html Msg) -> String -> Html Msg
+topicCard styles attributes buttons topic =
     card
+        styles
+        attributes
         [ div
             [ css
                 [ Css.displayFlex
@@ -1586,16 +1645,20 @@ smallBorderRadius =
     Css.borderRadius (rem 0.3)
 
 
-card : List (Html Msg) -> Html Msg
-card content =
+card : List Css.Style -> List (Attribute Msg) -> List (Html Msg) -> Html Msg
+card styles attributes content =
     div
-        [ css
-            [ Css.padding (rem 1)
-            , borderRadius
-            , Css.boxShadow4 zero (rem 0.1) (rem 0.3) (Css.hsla 0 0 0 0.25)
-            , Css.backgroundColor (Css.hsl 0 0 1)
-            ]
-        ]
+        ([ css
+            ([ Css.padding (rem 1)
+             , borderRadius
+             , Css.boxShadow4 zero (rem 0.1) (rem 0.3) (Css.hsla 0 0 0 0.25)
+             , Css.backgroundColor (Css.hsl 0 0 1)
+             ]
+                ++ styles
+            )
+         ]
+            ++ attributes
+        )
         content
 
 
