@@ -828,7 +828,7 @@ errorView maybeError =
                     ]
                     [ Html.summary [] [ text error.summary ]
                     , div [ css [ Css.fontStyle Css.italic ] ] [ text "Detailed info for experts:" ]
-                    , Html.pre []
+                    , Html.pre [ css [ Css.whiteSpace Css.normal ] ]
                         [ Html.code [] [ text <| stringFromErrorInfo error.info ]
                         ]
                     ]

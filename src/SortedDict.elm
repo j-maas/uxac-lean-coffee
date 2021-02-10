@@ -1,7 +1,6 @@
 module SortedDict exposing (SortedDict, empty, insert, remove, stableSortWith, toList)
 
 import Dict exposing (Dict)
-import Time
 
 
 type SortedDict comparable a
@@ -55,11 +54,7 @@ toList : SortedDict comparable a -> List ( comparable, a )
 toList (SortedDict sortedDict) =
     List.filterMap
         (\id ->
-            case Dict.get id sortedDict.items of
-                Just item ->
-                    Just ( id, item )
-
-                Nothing ->
-                    Nothing
+            Dict.get id sortedDict.items
+                |> Maybe.map (\item -> ( id, item ))
         )
         sortedDict.order
