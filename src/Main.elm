@@ -1447,10 +1447,10 @@ topicToVoteCard creds ( topicId, entry ) =
                 Unread ->
                     let
                         borderWidth =
-                            3
+                            0.25
                     in
-                    [ Css.border3 (px borderWidth) Css.solid (Css.hsl primaryHue 1 0.6)
-                    , Css.margin (px -borderWidth)
+                    [ Css.border3 (rem borderWidth) Css.solid (Css.hsl primaryHue 1 0.6)
+                    , Css.margin (rem -borderWidth)
                     ]
 
                 _ ->
