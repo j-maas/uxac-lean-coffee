@@ -1,17 +1,16 @@
 port module Main exposing (Model, Msg(..), init, main, update, view)
 
 import Browser
+import Browser.Dom exposing (Error(..))
 import Css exposing (auto, num, pct, px, rem, zero)
 import Css.Animations as Animations
 import Css.Global as Global
 import Css.Media as Media
 import Dict exposing (Dict)
-import Html as PlainHtml
 import Html.Styled as Html exposing (Html, button, div, form, h1, h2, img, input, label, li, ol, p, span, text, textarea)
 import Html.Styled.Attributes as Attributes exposing (css, placeholder, src, type_, value)
 import Html.Styled.Events exposing (onClick, onInput, onSubmit)
 import Json.Decode as Decode exposing (Decoder)
-import Json.Decode.Pipeline
 import Json.Encode as Encode
 import List.Extra as List
 import Remote exposing (Remote(..))
@@ -35,6 +34,7 @@ main =
 type alias Model =
     { inDiscussion : Maybe TopicId
     , topics : Remote TopicList
+    , topicsBeingEdited : Dict TopicId String
     , discussed : List ( TopicId, Maybe Time.Posix )
     , votes : Remote Votes
     , continuationVotes : Maybe (List ContinuationVote)
@@ -190,6 +190,7 @@ init flags =
     in
     ( { inDiscussion = Nothing
       , topics = Loading
+      , topicsBeingEdited = Dict.empty
       , discussed = []
       , votes = Loading
       , continuationVotes = Nothing
@@ -222,6 +223,9 @@ type Msg
     | DiscussedTopicsReceived (List ( TopicId, Maybe Time.Posix ))
     | DeadlineReceived (Maybe Time.Posix)
     | SaveTopic User
+    | EditTopicClicked TopicId
+    | TopicEdited TopicId String
+    | SaveTopicClicked TopicId
     | DeleteTopic TopicId
     | Discuss TopicId
     | FinishDiscussionClicked
@@ -333,6 +337,54 @@ update msg model =
                         model.timestampField
                         { topic = topic, userId = user.id }
             )
+
+        EditTopicClicked id ->
+            let
+                maybeTopic =
+                    Remote.toMaybe model.topics
+                        |> Maybe.andThen (SortedDict.get id)
+                        |> Maybe.map .topic
+
+                newTopicsBeingEdited =
+                    case maybeTopic of
+                        Just topic ->
+                            Dict.insert id topic model.topicsBeingEdited
+
+                        _ ->
+                            model.topicsBeingEdited
+            in
+            ( { model | topicsBeingEdited = newTopicsBeingEdited }, selectTextarea_ id )
+
+        TopicEdited id newEdit ->
+            let
+                newTopicsBeingEdited =
+                    model.topicsBeingEdited
+                        |> Dict.update id (Maybe.map (\_ -> newEdit))
+            in
+            ( { model | topicsBeingEdited = newTopicsBeingEdited }, Cmd.none )
+
+        SaveTopicClicked id ->
+            case
+                Dict.get id model.topicsBeingEdited
+                    |> Maybe.andThen
+                        (\newEdit ->
+                            Remote.toMaybe model.topics
+                                |> Maybe.andThen (SortedDict.get id)
+                                |> Maybe.map (\topic -> ( topic, newEdit ))
+                        )
+            of
+                Just ( topic, newEdit ) ->
+                    let
+                        newTopicsBeingEdited =
+                            Dict.remove id model.topicsBeingEdited
+
+                        newTopic =
+                            { topic | topic = newEdit }
+                    in
+                    ( { model | topicsBeingEdited = newTopicsBeingEdited }, setTopic model.workspace id newTopic )
+
+                _ ->
+                    ( model, Cmd.none )
 
         DeleteTopic id ->
             ( model, deleteTopic model.workspace id model.votes )
@@ -465,20 +517,35 @@ updateTopicList voteCountMap changes remoteTopics =
             let
                 topicsRemoved =
                     List.foldl (\id topics -> SortedDict.remove id topics) currentTopics changes.removed
+
+                topicsModified =
+                    List.foldl (\( id, newTopic ) topics -> SortedDict.update id (Maybe.map (\_ -> newTopic)) topics) topicsRemoved changes.modified
             in
-            List.foldl (\( id, topic ) topics -> SortedDict.insert id topic topics) topicsRemoved (changes.added ++ changes.modified)
+            List.foldl (\( id, topic ) topics -> SortedDict.insert id topic topics) topicsModified changes.added
     )
         |> Got
 
 
-submitTopic : Maybe String -> TimestampField -> TopicSubmission -> Cmd msg
+submitTopic : Maybe String -> TimestampField -> NewTopicSubmission -> Cmd msg
 submitTopic workspace timestampField submission =
     insertDoc
         { collectionPath = topicCollectionPath workspace
         , doc =
-            topicEncoder
+            newTopicEncoder
                 submission
                 timestampField
+        }
+
+
+setTopic : Maybe String -> TopicId -> Topic -> Cmd msg
+setTopic workspace topicId newTopic =
+    let
+        topicPath =
+            topicCollectionPath workspace ++ [ topicId ]
+    in
+    setDoc
+        { docPath = topicPath
+        , doc = topicEncoder newTopic
         }
 
 
@@ -688,6 +755,7 @@ type alias TopicWithVotes =
     ( TopicId
     , { topic : Topic
       , votes : List UserId
+      , beingEdited : Maybe String
       }
     )
 
@@ -696,6 +764,7 @@ processTopics :
     { a
         | inDiscussion : Maybe TopicId
         , topics : Remote TopicList
+        , topicsBeingEdited : Dict TopicId String
         , discussed : List ( TopicId, Maybe Time.Posix )
         , votes : Remote Votes
     }
@@ -719,6 +788,7 @@ processTopics model =
                                               , votes =
                                                     Dict.get id votes
                                                         |> Maybe.withDefault []
+                                              , beingEdited = Dict.get id model.topicsBeingEdited
                                               }
                                             )
                                         )
@@ -1363,12 +1433,13 @@ topicToDiscussCard creds ( topicId, entry ) =
                 []
     in
     topicCard
-        ([ votesIndicator voteCount ]
-            ++ maybeFinishButton
-            ++ maybeVoteAgainButton
-            ++ maybeDeleteButton
-        )
-        entry.topic.topic
+        { content = text entry.topic.topic
+        , toolbar =
+            [ votesIndicator voteCount ]
+                ++ maybeFinishButton
+                ++ maybeVoteAgainButton
+                ++ maybeDeleteButton
+        }
 
 
 topicToVoteCard : Credentials a -> TopicWithVotes -> Html Msg
@@ -1384,6 +1455,51 @@ topicToVoteCard creds ( topicId, entry ) =
         mayMod =
             mayModify creds entry.topic.creator
 
+        content =
+            case entry.beingEdited of
+                Just edit ->
+                    form
+                        [ css
+                            [ Css.displayFlex
+                            , Css.justifyContent Css.spaceBetween
+                            , Css.alignItems Css.start
+                            ]
+                        , onSubmit (SaveTopicClicked topicId)
+                        ]
+                        [ textarea
+                            [ Attributes.id topicId
+                            , value edit
+                            , onInput (TopicEdited topicId)
+                            , Attributes.autofocus True
+                            , css
+                                [ inputStyle
+                                , bodyFont
+                                , Css.width (pct 100)
+                                , Css.lineHeight (rem 1)
+                                ]
+                            ]
+                            []
+                        , div [ css [ Css.marginLeft (rem 1) ] ] [ saveButton topicId ]
+                        ]
+
+                Nothing ->
+                    let
+                        maybeEditButton =
+                            if mayMod then
+                                [ editButton topicId ]
+
+                            else
+                                []
+                    in
+                    div
+                        [ css
+                            [ Css.displayFlex
+                            , Css.justifyContent Css.spaceBetween
+                            , Css.alignItems Css.start
+                            ]
+                        ]
+                        ([ text entry.topic.topic ] ++ maybeEditButton)
+
         maybeDeleteButton =
             if mayMod then
                 [ deleteButton topicId ]
@@ -1392,11 +1508,12 @@ topicToVoteCard creds ( topicId, entry ) =
                 []
     in
     topicCard
-        (maybeTopicVoteButton creds.user ( topicId, entry )
-            ++ maybeDiscussButton
-            ++ maybeDeleteButton
-        )
-        entry.topic.topic
+        { content = content
+        , toolbar =
+            maybeTopicVoteButton creds.user ( topicId, entry )
+                ++ maybeDiscussButton
+                ++ maybeDeleteButton
+        }
 
 
 finishedTopicCard : Credentials a -> TopicWithVotes -> Html Msg
@@ -1416,10 +1533,11 @@ finishedTopicCard creds ( topicId, entry ) =
                 []
     in
     topicCard
-        ([ votesIndicator voteCount ]
-            ++ maybeDeleteButton
-        )
-        entry.topic.topic
+        { content = text entry.topic.topic
+        , toolbar =
+            [ votesIndicator voteCount ]
+                ++ maybeDeleteButton
+        }
 
 
 maybeTopicVoteButton : Remote User -> TopicWithVotes -> List (Html Msg)
@@ -1492,6 +1610,24 @@ votesText count =
         ("👍 " ++ String.fromInt count)
 
 
+saveButton : TopicId -> Html Msg
+saveButton topicId =
+    button
+        [ onClick (SaveTopicClicked topicId)
+        , css [ buttonStyle ]
+        ]
+        [ text "Save" ]
+
+
+editButton : TopicId -> Html Msg
+editButton topicId =
+    button
+        [ onClick (EditTopicClicked topicId)
+        , css [ buttonStyle ]
+        ]
+        [ text "Edit" ]
+
+
 deleteButton : TopicId -> Html Msg
 deleteButton topicId =
     button
@@ -1515,8 +1651,8 @@ mayModify creds creator =
                 user.id == creator
 
 
-topicCard : List (Html Msg) -> String -> Html Msg
-topicCard buttons topic =
+topicCard : { content : Html Msg, toolbar : List (Html Msg) } -> Html Msg
+topicCard { content, toolbar } =
     card
         [ div
             [ css
@@ -1524,7 +1660,7 @@ topicCard buttons topic =
                 , Css.flexDirection Css.column
                 ]
             ]
-            [ text topic
+            [ content
             , div
                 [ css
                     [ Css.marginTop (rem 1)
@@ -1534,7 +1670,7 @@ topicCard buttons topic =
                     , Css.justifyContent Css.spaceBetween
                     ]
                 ]
-                buttons
+                toolbar
             ]
         ]
 
@@ -1546,11 +1682,11 @@ submitForm fetchedUser currentInput =
             text "Connecting…"
 
         Got user ->
-            newTopic user currentInput
+            newTopicForm user currentInput
 
 
-newTopic : User -> String -> Html Msg
-newTopic user currentInput =
+newTopicForm : User -> String -> Html Msg
+newTopicForm user currentInput =
     form
         [ css [ Css.displayFlex, Css.flexDirection Css.column, Css.alignItems Css.flexStart ]
         , onSubmit (SaveTopic user)
@@ -2000,6 +2136,9 @@ port receiveUser_ : (Encode.Value -> msg) -> Sub msg
 port receiveError_ : (Encode.Value -> msg) -> Sub msg
 
 
+port selectTextarea_ : String -> Cmd msg
+
+
 
 -- DECODERS
 
@@ -2066,6 +2205,26 @@ userDecoder : Decoder User
 userDecoder =
     Decode.field "id" Decode.string
         |> Decode.map (\id -> { id = id })
+
+
+timestampEncoder : Time.Posix -> Encode.Value
+timestampEncoder time =
+    let
+        milliseconds =
+            Time.posixToMillis time
+
+        seconds =
+            toFloat milliseconds
+                / 1000
+                |> round
+
+        nanoseconds =
+            milliseconds * 1000000
+    in
+    Encode.object
+        [ ( "seconds", Encode.int seconds )
+        , ( "nanoseconds", Encode.int nanoseconds )
+        ]
 
 
 timestampDecoder : Decoder Time.Posix
@@ -2186,17 +2345,36 @@ firestoreErrorDecoder =
         (Decode.field "message" Decode.string)
 
 
-type alias TopicSubmission =
+type alias NewTopicSubmission =
     { topic : String, userId : String }
 
 
-topicEncoder : TopicSubmission -> TimestampField -> Encode.Value
-topicEncoder { topic, userId } timestampField =
+newTopicEncoder : NewTopicSubmission -> TimestampField -> Encode.Value
+newTopicEncoder { topic, userId } timestampField =
     Encode.object
         [ ( "topic", Encode.string topic )
         , ( "userId", Encode.string userId )
         , ( "createdAt", timestampField )
         ]
+
+
+topicEncoder : Topic -> Encode.Value
+topicEncoder topic =
+    Encode.object
+        [ ( "topic", Encode.string topic.topic )
+        , ( "userId", Encode.string topic.creator )
+        , ( "createdAt", maybeEncoder timestampEncoder topic.createdAt )
+        ]
+
+
+maybeEncoder : (a -> Encode.Value) -> Maybe a -> Encode.Value
+maybeEncoder encoder maybe =
+    case maybe of
+        Just a ->
+            encoder a
+
+        Nothing ->
+            Encode.null
 
 
 topicVoteEncoder : Vote -> Encode.Value
