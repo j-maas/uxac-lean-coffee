@@ -957,14 +957,19 @@ discussionView creds maybeDiscussedTopic continuationVotes times timerInput =
                         ]
 
                     Nothing ->
-                        [ div
-                            [ css [ Css.opacity (num 0.5) ]
+                        [ card
+                            [ Css.boxShadow5 Css.inset zero (rem 0.1) (rem 0.3) (Css.hsla 0 0 0 0.25)
+                            , Css.backgroundColor Css.transparent
                             ]
-                            [ card []
-                                []
-                                [ div [ css [ Css.width (pct 100), Css.minHeight (rem 5) ] ]
-                                    [ text "Currently there is no topic in discussion. Vote for one below."
+                            []
+                            [ div
+                                [ css
+                                    [ Css.width (pct 100)
+                                    , Css.minHeight (rem 5)
+                                    , Css.fontStyle Css.italic
                                     ]
+                                ]
+                                [ text "Currently there is no topic in discussion. Vote for one below."
                                 ]
                             ]
                         ]
