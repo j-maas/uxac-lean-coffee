@@ -147,6 +147,20 @@ app.ports.deleteDocs_.subscribe(info => {
   })
 });
 
+app.ports.selectTextarea_.subscribe(id => {
+  // We cannot do this immediately, as the view will not yet have updated.
+  requestAnimationFrame(() => {
+    const textarea = document.getElementById(id);
+
+    if (textarea === null) {
+      console.warn(`Tried to focus textarea, but could not find any with id ${id}.`);
+      return;
+    }
+
+    textarea.focus();
+    textarea.select();
+  });
+})
 
 function sendErrorToElm(error) {
   console.error(error);
