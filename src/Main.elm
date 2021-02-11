@@ -207,7 +207,7 @@ init flags =
       , workspace = workspace
       , timestampField = flags.timestampField
       }
-    , firestoreSubscriptionsCmd workspace
+    , Cmd.none
     )
 
 
@@ -260,7 +260,7 @@ update msg model =
         UserReceived result ->
             case result of
                 Ok user ->
-                    ( { model | user = Got user }, Cmd.none )
+                    ( { model | user = Got user }, firestoreSubscriptionsCmd model.workspace )
 
                 Err error ->
                     ( { model | error = Just (processParsingError error) }, Cmd.none )
