@@ -185,7 +185,16 @@ init flags =
 
         workspace =
             if String.startsWith workspaceQueryPrefix flags.workspaceQuery then
-                Just <| String.dropLeft (String.length workspaceQueryPrefix) flags.workspaceQuery
+                let
+                    sanitizedWorkspace =
+                        String.dropLeft (String.length workspaceQueryPrefix) flags.workspaceQuery
+                            |> String.trim
+                in
+                if String.isEmpty sanitizedWorkspace then
+                    Nothing
+
+                else
+                    Just sanitizedWorkspace
 
             else
                 Nothing
