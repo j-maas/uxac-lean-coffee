@@ -1,6 +1,7 @@
-module SortedDict exposing (SortedDict, empty, insert, remove, stableSortWith, toList)
+module SortedDict exposing (SortedDict, empty, get, insert, remove, stableSortWith, toList, update)
 
 import Dict exposing (Dict)
+import List.Extra as List
 
 
 type SortedDict comparable a
@@ -15,6 +16,11 @@ empty =
     SortedDict { order = [], items = Dict.empty }
 
 
+get : comparable -> SortedDict comparable a -> Maybe a
+get key (SortedDict old) =
+    Dict.get key old.items
+
+
 insert : comparable -> a -> SortedDict comparable a -> SortedDict comparable a
 insert id item (SortedDict old) =
     let
@@ -23,6 +29,27 @@ insert id item (SortedDict old) =
                 ++ [ id ]
     in
     SortedDict { order = newOrder, items = Dict.insert id item old.items }
+
+
+update : comparable -> (Maybe a -> Maybe a) -> SortedDict comparable a -> SortedDict comparable a
+update id updateFunction (SortedDict old) =
+    let
+        newItem =
+            Dict.get id old.items
+                |> updateFunction
+    in
+    case newItem of
+        Just a ->
+            SortedDict
+                { old
+                    | items = Dict.insert id a old.items
+                }
+
+        Nothing ->
+            SortedDict
+                { order = List.remove id old.order
+                , items = Dict.remove id old.items
+                }
 
 
 remove : comparable -> SortedDict comparable a -> SortedDict comparable a
