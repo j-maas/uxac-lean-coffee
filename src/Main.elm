@@ -39,7 +39,8 @@ type alias Model =
     , topicsBeingEdited : Dict TopicId String
     , discussed : List ( TopicId, Maybe Time.Posix )
     , votes : Remote Votes
-    , continuationVotes : Maybe (List ContinuationVote)
+    , continuationVoteActive : Remote Bool
+    , continuationVotes : Remote (List ContinuationVote)
     , deadline : Maybe Time.Posix
     , now : Maybe Time.Posix
     , timerInput : String
@@ -205,7 +206,8 @@ init flags =
       , topicsBeingEdited = Dict.empty
       , discussed = []
       , votes = Loading
-      , continuationVotes = Nothing
+      , continuationVoteActive = Loading
+      , continuationVotes = Loading
       , deadline = Nothing
       , now = Nothing
       , timerInput = "10"
@@ -301,23 +303,10 @@ update msg model =
             ( newModel, Cmd.none )
 
         ContinuationVoteActiveReceived isActive ->
-            let
-                continuationVotes =
-                    if isActive then
-                        Just []
-
-                    else
-                        Nothing
-            in
-            ( { model | continuationVotes = continuationVotes }, Cmd.none )
+            ( { model | continuationVoteActive = Got isActive }, Cmd.none )
 
         ContinuationVotesReceived continuationVotes ->
-            let
-                newContinuationVotes =
-                    model.continuationVotes
-                        |> Maybe.map (\_ -> continuationVotes)
-            in
-            ( { model | continuationVotes = newContinuationVotes }, Cmd.none )
+            ( { model | continuationVotes = Got continuationVotes }, Cmd.none )
 
         TopicInDiscussionReceived topic ->
             ( { model | inDiscussion = topic }, Cmd.none )
@@ -415,7 +404,7 @@ update msg model =
                         cmds =
                             Cmd.batch
                                 [ finishDiscussion model.workspace inDiscussion model.timestampField
-                                , clearContinuationVotes model.workspace model.continuationVotes
+                                , clearContinuationVotes model.workspace (Remote.toMaybe model.continuationVotes)
                                 , clearDeadline model.workspace
                                 ]
                     in
@@ -436,7 +425,7 @@ update msg model =
             ( model, startContinuationVote model.workspace )
 
         ClearContinuationVote ->
-            ( model, clearContinuationVotes model.workspace model.continuationVotes )
+            ( model, clearContinuationVotes model.workspace (Remote.toMaybe model.continuationVotes) )
 
         ContinuationVoteSent vote ->
             ( model, submitContinuationVote model.workspace vote )
@@ -485,7 +474,7 @@ update msg model =
                         cmds =
                             Cmd.batch
                                 [ submitDeadline model.workspace deadline
-                                , clearContinuationVotes model.workspace model.continuationVotes
+                                , clearContinuationVotes model.workspace (Remote.toMaybe model.continuationVotes)
                                 ]
                     in
                     ( model, cmds )
@@ -703,6 +692,13 @@ view model =
                         ""
                    )
 
+        continuationVotes =
+            if Remote.toMaybe model.continuationVoteActive |> Maybe.withDefault False then
+                Remote.toMaybe model.continuationVotes
+
+            else
+                Nothing
+
         { inDiscussion, topicList, discussedList } =
             processTopics model
     in
@@ -732,7 +728,7 @@ view model =
                 ]
              ]
                 ++ errorView model.error
-                ++ [ discussionView model inDiscussion model.continuationVotes model model.timerInput ]
+                ++ [ discussionView model inDiscussion continuationVotes model model.timerInput ]
                 ++ discussedTopics model discussedList
                 ++ [ topicEntry model.user model.newTopicInput ]
             )
