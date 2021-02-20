@@ -1219,7 +1219,7 @@ continuationVoteButtons user continuationVotes =
                 { upvote = ContinuationVoteSent { userId = user.id, vote = Stay }
                 , downvote = RemoveContinuationVote user.id
                 }
-                (\count -> text <| "Stay (" ++ String.fromInt count ++ ")")
+                (\count -> text <| "Discuss more (" ++ String.fromInt count ++ ")")
 
         abstainButton =
             voteButton user
@@ -1227,7 +1227,7 @@ continuationVoteButtons user continuationVotes =
                 { upvote = ContinuationVoteSent { userId = user.id, vote = Abstain }
                 , downvote = RemoveContinuationVote user.id
                 }
-                (\count -> text <| "Abstain (" ++ String.fromInt count ++ ")")
+                (\count -> text <| "Neutral (" ++ String.fromInt count ++ ")")
 
         moveOnButton =
             voteButton user
@@ -1235,7 +1235,7 @@ continuationVoteButtons user continuationVotes =
                 { upvote = ContinuationVoteSent { userId = user.id, vote = MoveOn }
                 , downvote = RemoveContinuationVote user.id
                 }
-                (\count -> text <| "Move on (" ++ String.fromInt count ++ ")")
+                (\count -> text <| "Next topic (" ++ String.fromInt count ++ ")")
     in
     div
         [ css
