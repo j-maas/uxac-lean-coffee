@@ -80,11 +80,14 @@ app.ports.logInWithGoogle_.subscribe(() => {
     .setPersistence(firebase.auth.Auth.Persistence.LOCAL) // Persist the authentication across page loads.
     .then(() => {
       console.log("Loggin in user via google.com.");
-      return firebase.auth().signInWithPopup(provider);
+      return firebase.auth().signInWithRedirect(provider);
     })
     .catch(sendErrorToElm);
 });
 
+firebase.auth()
+  .getRedirectResult()
+  .catch(sendErrorToElm);
 
 // Set up ports so that we can subscribe to collections and docs from Elm.
 
