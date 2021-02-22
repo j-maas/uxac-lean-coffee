@@ -13,10 +13,12 @@ import Html.Styled.Events exposing (on, onClick, onInput, onMouseEnter, onSubmit
 import Json.Decode as Decode exposing (Decoder)
 import Json.Encode as Encode
 import List.Extra as List
+import Random
 import Remote exposing (Remote(..))
 import Set exposing (Set)
 import SortedDict exposing (SortedDict)
 import Time
+import UUID
 
 
 main =
@@ -49,6 +51,7 @@ type alias Model =
     , isAdmin : Bool
     , error : Maybe Error
     , workspace : Maybe String
+    , uuidSeeds : UUID.Seeds
 
     {- This allows us to specify that a server should add a timestamp
        in a document's field.
@@ -175,6 +178,7 @@ type alias Flags =
     { timestampField : TimestampField
     , isAdmin : Bool
     , workspaceQuery : String
+    , uuidSeeds : { seed1 : Int, seed2 : Int, seed3 : Int, seed4 : Int }
     }
 
 
@@ -199,6 +203,13 @@ init flags =
 
             else
                 Nothing
+
+        uuidSeeds =
+            { seed1 = Random.initialSeed flags.uuidSeeds.seed1
+            , seed2 = Random.initialSeed flags.uuidSeeds.seed2
+            , seed3 = Random.initialSeed flags.uuidSeeds.seed3
+            , seed4 = Random.initialSeed flags.uuidSeeds.seed4
+            }
     in
     ( { inDiscussion = Nothing
       , topics = Loading
@@ -216,6 +227,7 @@ init flags =
       , isAdmin = flags.isAdmin
       , error = Nothing
       , workspace = workspace
+      , uuidSeeds = uuidSeeds
       , timestampField = flags.timestampField
       }
     , Cmd.none

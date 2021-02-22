@@ -21,10 +21,21 @@ firebase.initializeApp(firebaseConfig);
 
 const db = firebase.firestore();
 
+var randomValues = new Int32Array(4);
+window.crypto.getRandomValues(randomValues);
+
+const uuidSeeds = {
+  seed1: randomValues[0],
+  seed2: randomValues[1],
+  seed3: randomValues[2],
+  seed4: randomValues[3],
+}
+
 const flags = {
   timestampField: firebase.firestore.FieldValue.serverTimestamp(),
   isAdmin: window.location.hash === "#admin",
-  workspaceQuery: window.location.search
+  workspaceQuery: window.location.search,
+  uuidSeeds,
 };
 
 console.log("Initializing Elm with flags:\n", flags);
