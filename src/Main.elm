@@ -344,16 +344,30 @@ update msg model =
             ( { model | readTopics = Set.insert topicId model.readTopics }, Cmd.none )
 
         SaveTopic user ->
-            ( { model | newTopicInput = "" }
-            , case model.newTopicInput of
+            case model.newTopicInput of
                 "" ->
-                    Cmd.none
-
+                    ({model | newTopicInput = ""}, Cmd.none)
                 topic ->
-                    submitTopic model.workspace
-                        model.timestampField
-                        { topic = topic, userId = user.id }
-            )
+
+                            let
+                                ( uuid, newSeeds ) =
+                                    UUID.step model.uuidSeeds
+
+                                topicId = UUID.toString uuid
+
+                                newTopic = {topic = topic
+                                    , userId = user.id
+                                    , createdAt = model.timestampField}
+
+                                newRead = Set.insert topicId model.readTopics 
+                            in
+                            ( { model
+                                | newTopicInput = ""
+                                , readTopics = newRead
+                                , uuidSeeds = newSeeds
+                            }
+                            , submitTopic model.workspace topicId newTopic
+                            )
 
         EditTopicClicked id ->
             let
@@ -543,14 +557,13 @@ updateTopicList voteCountMap changes remoteTopics =
         |> Got
 
 
-submitTopic : Maybe String -> TimestampField -> NewTopicSubmission -> Cmd msg
-submitTopic workspace timestampField submission =
-    insertDoc
-        { collectionPath = topicCollectionPath workspace
+submitTopic : Maybe String -> TopicId -> NewTopicSubmission -> Cmd msg
+submitTopic workspace id newTopic =
+    setDoc
+        { docPath = topicCollectionPath workspace ++ [ id ]
         , doc =
             newTopicEncoder
-                submission
-                timestampField
+                newTopic
         }
 
 
@@ -2453,15 +2466,15 @@ firestoreErrorDecoder =
 
 
 type alias NewTopicSubmission =
-    { topic : String, userId : String }
+    { topic : String, userId : String, createdAt : TimestampField }
 
 
-newTopicEncoder : NewTopicSubmission -> TimestampField -> Encode.Value
-newTopicEncoder { topic, userId } timestampField =
+newTopicEncoder : NewTopicSubmission -> Encode.Value
+newTopicEncoder { topic, userId, createdAt } =
     Encode.object
         [ ( "topic", Encode.string topic )
         , ( "userId", Encode.string userId )
-        , ( "createdAt", timestampField )
+        , ( "createdAt", createdAt )
         ]
 
 
