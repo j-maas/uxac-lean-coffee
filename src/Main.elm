@@ -346,28 +346,32 @@ update msg model =
         SaveTopic user ->
             case model.newTopicInput of
                 "" ->
-                    ({model | newTopicInput = ""}, Cmd.none)
+                    ( { model | newTopicInput = "" }, Cmd.none )
+
                 topic ->
+                    let
+                        ( uuid, newSeeds ) =
+                            UUID.step model.uuidSeeds
 
-                            let
-                                ( uuid, newSeeds ) =
-                                    UUID.step model.uuidSeeds
+                        topicId =
+                            UUID.toString uuid
 
-                                topicId = UUID.toString uuid
-
-                                newTopic = {topic = topic
-                                    , userId = user.id
-                                    , createdAt = model.timestampField}
-
-                                newRead = Set.insert topicId model.readTopics 
-                            in
-                            ( { model
-                                | newTopicInput = ""
-                                , readTopics = newRead
-                                , uuidSeeds = newSeeds
+                        newTopic =
+                            { topic = topic
+                            , userId = user.id
+                            , createdAt = model.timestampField
                             }
-                            , submitTopic model.workspace topicId newTopic
-                            )
+
+                        newRead =
+                            Set.insert topicId model.readTopics
+                    in
+                    ( { model
+                        | newTopicInput = ""
+                        , readTopics = newRead
+                        , uuidSeeds = newSeeds
+                      }
+                    , submitTopic model.workspace topicId newTopic
+                    )
 
         EditTopicClicked id ->
             let
@@ -752,6 +756,7 @@ view model =
                 , h1 [ css [ Css.margin zero ] ] [ text heading ]
                 ]
              ]
+                ++ [ settingsView model.user ]
                 ++ errorView model.error
                 ++ [ discussionView model inDiscussion continuationVotes model model.timerInput ]
                 ++ discussedTopics model discussedList
@@ -901,6 +906,21 @@ extract : (a -> Bool) -> List a -> ( Maybe a, List a )
 extract predicate list =
     List.partition predicate list
         |> Tuple.mapFirst List.head
+
+
+settingsView : Remote User -> Html Msg
+settingsView remoteUser =
+    Html.details [ css [ detailsStyle ] ]
+        [ Html.summary [] [ text "Settings" ]
+        , Html.div [ css [ Css.paddingTop (rem 1) ] ]
+            [ case remoteUser of
+                Loading ->
+                    text "Loading..."
+
+                Got user ->
+                    text ("Logged in as " ++ user.id)
+            ]
+        ]
 
 
 errorView : Maybe Error -> List (Html Msg)
@@ -1162,10 +1182,7 @@ discussedTopics model topics =
             in
             [ Html.details
                 [ css
-                    [ containerPadding
-                    , backgroundColor
-                    , borderRadius
-                    ]
+                    [ detailsStyle ]
                 ]
                 [ Html.summary [] [ text pluralizedHeading ]
                 , ol
@@ -1185,6 +1202,15 @@ discussedTopics model topics =
                     )
                 ]
             ]
+
+
+detailsStyle : Css.Style
+detailsStyle =
+    Css.batch
+        [ containerPadding
+        , backgroundColor
+        , borderRadius
+        ]
 
 
 continuationVote : Credentials a -> Maybe (List ContinuationVote) -> List (Html Msg)
