@@ -33,7 +33,6 @@ const uuidSeeds = {
 
 const flags = {
   timestampField: firebase.firestore.FieldValue.serverTimestamp(),
-  isAdmin: window.location.hash === "#admin",
   workspaceQuery: window.location.search,
   uuidSeeds,
 };

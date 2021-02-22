@@ -186,7 +186,6 @@ type alias TimestampField =
 
 type alias Flags =
     { timestampField : TimestampField
-    , isAdmin : Bool
     , workspaceQuery : String
     , uuidSeeds : { seed1 : Int, seed2 : Int, seed3 : Int, seed4 : Int }
     }
@@ -234,7 +233,7 @@ init flags =
       , timerInput = "10"
       , newTopicInput = ""
       , user = Loading
-      , isAdmin = flags.isAdmin
+      , isAdmin = False
       , error = Nothing
       , workspace = workspace
       , uuidSeeds = uuidSeeds
@@ -251,6 +250,7 @@ init flags =
 type Msg
     = UserReceived (Result Decode.Error User)
     | LogInWithGoogleClicked
+    | SetAdmin Bool
     | DecodeError Decode.Error
     | TopicChangesReceived TopicChanges
     | VotesReceived Votes
@@ -301,6 +301,9 @@ update msg model =
 
         LogInWithGoogleClicked ->
             ( model, logInWithGoogle_ () )
+
+        SetAdmin isAdmin ->
+            ( { model | isAdmin = isAdmin }, Cmd.none )
 
         DecodeError error ->
             ( { model | error = Just (processParsingError error) }, Cmd.none )
@@ -770,7 +773,7 @@ view model =
                 , h1 [ css [ Css.margin zero ] ] [ text heading ]
                 ]
              ]
-                ++ [ settingsView model.user ]
+                ++ [ settingsView model ]
                 ++ errorView model.error
                 ++ [ discussionView model inDiscussion continuationVotes model model.timerInput ]
                 ++ discussedTopics model discussedList
@@ -922,12 +925,12 @@ extract predicate list =
         |> Tuple.mapFirst List.head
 
 
-settingsView : Remote User -> Html Msg
-settingsView remoteUser =
+settingsView : Credentials a -> Html Msg
+settingsView credentials =
     Html.details [ css [ detailsStyle ] ]
         [ Html.summary [] [ text "Settings" ]
         , Html.div [ css [ Css.paddingTop (rem 1) ] ]
-            (case remoteUser of
+            (case credentials.user of
                 Loading ->
                     [ Html.p [] [ text "Connecting…" ] ]
 
@@ -942,6 +945,11 @@ settingsView remoteUser =
 
                 Got (GoogleUser user) ->
                     [ Html.p [] [ text ("Logged in via Google as " ++ user.email ++ ".") ]
+                    , if credentials.isAdmin then
+                        Html.button [ css [ buttonStyle ], onClick (SetAdmin False) ] [ text "Deactivate admin" ]
+
+                      else
+                        Html.button [ css [ buttonStyle ], onClick (SetAdmin True) ] [ text "Activate admin" ]
                     ]
             )
         ]
