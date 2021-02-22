@@ -29,11 +29,10 @@ const uuidSeeds = {
   seed2: randomValues[1],
   seed3: randomValues[2],
   seed4: randomValues[3],
-}
+};
 
 const flags = {
   timestampField: firebase.firestore.FieldValue.serverTimestamp(),
-  isAdmin: window.location.hash === "#admin",
   workspaceQuery: window.location.search,
   uuidSeeds,
 };
@@ -48,32 +47,64 @@ const app = Elm.Main.init({
 
 // Sign in and pass the user to Elm.
 
-firebase.auth().signInAnonymously()
-  .then(user => {
-    const id = user.user.uid
-    console.log(`User is logged in with id ${id}.`)
+firebase.auth().onAuthStateChanged((currentUser) => {
+  if (currentUser !== null) {
+    if (currentUser.isAnonymous) {
+      const id = currentUser.uid;
+      console.log(`User is logged in anonymously with id ${id}.`);
 
-    app.ports.receiveUser_.send({ id: id })
-  })
+      app.ports.receiveUser_.send({ provider: "anonymous", id });
+    } else {
+      const provider = currentUser.providerData[0].providerId;
+      const id = currentUser.uid;
+      const email = currentUser.email;
+      console.log(`User is logged in via ${provider} with id ${id}.`);
+
+      app.ports.receiveUser_.send({ provider, id, email });
+    }
+
+  } else {
+    console.log("Logging in user anonymously.");
+    firebase.auth()
+      .setPersistence(firebase.auth.Auth.Persistence.LOCAL) // Persist the authentication across page loads.
+      .then(() => {
+        return firebase.auth().signInAnonymously();
+      })
+      .catch(sendErrorToElm);
+  }
+});
+
+app.ports.logInWithGoogle_.subscribe(() => {
+  var provider = new firebase.auth.GoogleAuthProvider();
+  firebase.auth()
+    .setPersistence(firebase.auth.Auth.Persistence.LOCAL) // Persist the authentication across page loads.
+    .then(() => {
+      console.log("Loggin in user via google.com.");
+      return firebase.auth().signInWithRedirect(provider);
+    })
+    .catch(sendErrorToElm);
+});
+
+firebase.auth()
+  .getRedirectResult()
   .catch(sendErrorToElm);
-
 
 // Set up ports so that we can subscribe to collections and docs from Elm.
 
 app.ports.subscribe_.subscribe(info => {
   if (info.kind === "collection") {
-    subscribeToCollection(info.path, info.tag)
+    subscribeToCollection(info.path, info.tag);
   } else if (info.kind === "collectionChanges") {
-    subscribeToCollectionChanges(info.path, info.tag)
+    subscribeToCollectionChanges(info.path, info.tag);
   } else if (info.kind === "doc") {
-    subscribeToDoc(info.path, info.tag)
+    subscribeToDoc(info.path, info.tag);
   } else {
     console.error(`Invalid subscription kind ${info.kind}.`);
   }
 });
 
 function subscribeToCollection(path, tag) {
-  console.log(`Subscribing to collection at ${path}.`);
+  console.debug(`Subscribing to collection at ${path}.`);
 
   db.collection(path).onSnapshot(snapshot => {
     const docs = [];
@@ -85,16 +116,16 @@ function subscribeToCollection(path, tag) {
       });
     });
 
-    console.log(`Received new snapshot for collection ${tag}:\n`, docs);
+    console.debug(`Received new snapshot for collection ${tag}:\n`, docs);
     app.ports.receive_.send({
       tag: tag,
       data: docs,
     });
-  })
+  });
 }
 
 function subscribeToCollectionChanges(path, tag) {
-  console.log(`Subscribing to collection changes at ${path}.`);
+  console.debug(`Subscribing to collection changes at ${path}.`);
 
   db.collection(path).onSnapshot(snapshot => {
     const changes = [];
@@ -107,33 +138,33 @@ function subscribeToCollectionChanges(path, tag) {
       });
     });
 
-    console.log(`Received new changes for collection ${tag}:\n`, changes);
+    console.debug(`Received new changes for collection ${tag}:\n`, changes);
     app.ports.receive_.send({
       tag: tag,
       data: changes,
     });
-  })
+  });
 }
 
 function subscribeToDoc(path, tag) {
-  console.log(`Subscribing to doc at ${path}.`);
+  console.debug(`Subscribing to doc at ${path}.`);
 
   db.doc(path).onSnapshot(snapshot => {
     const doc = snapshot.data();
 
-    console.log(`Received new snapshot for doc ${tag}:\n`, doc);
+    console.debug(`Received new snapshot for doc ${tag}:\n`, doc);
     app.ports.receive_.send({
       tag: tag,
       data: doc,
     });
-  })
+  });
 }
 
 
 // Set up ports so that we can add and delete docs from Elm.
 
 app.ports.insertDoc_.subscribe(info => {
-  console.log(`Adding doc at ${info.path}:\n`, info.doc);
+  console.debug(`Adding doc at ${info.path}:\n`, info.doc);
 
   db.collection(info.path)
     .add(info.doc)
@@ -141,21 +172,21 @@ app.ports.insertDoc_.subscribe(info => {
 });
 
 app.ports.setDoc_.subscribe(info => {
-  console.log(`Setting the doc at ${info.path}:\n`, info.doc);
+  console.debug(`Setting the doc at ${info.path}:\n`, info.doc);
 
   db.doc(info.path)
     .set(info.doc)
     .catch(sendErrorToElm);
-})
+});
 
 app.ports.deleteDocs_.subscribe(info => {
-  console.log(`Deleting the docs at ${info.paths}`);
+  console.debug(`Deleting the docs at ${info.paths}`);
 
   info.paths.forEach(path => {
     db.doc(path)
       .delete()
       .catch(sendErrorToElm);
-  })
+  });
 });
 
 app.ports.selectTextarea_.subscribe(id => {
@@ -171,7 +202,7 @@ app.ports.selectTextarea_.subscribe(id => {
     textarea.focus();
     textarea.select();
   });
-})
+});
 
 function sendErrorToElm(error) {
   console.error(error);

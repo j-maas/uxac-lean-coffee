@@ -131,7 +131,7 @@ type alias Vote =
 
 voteFrom : User -> TopicId -> Vote
 voteFrom user topicId =
-    { userId = user.id, topicId = topicId }
+    { userId = getUserId user, topicId = topicId }
 
 
 type alias ContinuationVote =
@@ -146,9 +146,19 @@ type Continuation
     | Abstain
 
 
-type alias User =
-    { id : UserId
-    }
+type User
+    = AnonymousUser { id : UserId }
+    | GoogleUser { id : UserId, email : String }
+
+
+getUserId : User -> UserId
+getUserId user =
+    case user of
+        AnonymousUser { id } ->
+            id
+
+        GoogleUser { id } ->
+            id
 
 
 type alias UserId =
@@ -176,7 +186,6 @@ type alias TimestampField =
 
 type alias Flags =
     { timestampField : TimestampField
-    , isAdmin : Bool
     , workspaceQuery : String
     , uuidSeeds : { seed1 : Int, seed2 : Int, seed3 : Int, seed4 : Int }
     }
@@ -224,7 +233,7 @@ init flags =
       , timerInput = "10"
       , newTopicInput = ""
       , user = Loading
-      , isAdmin = flags.isAdmin
+      , isAdmin = False
       , error = Nothing
       , workspace = workspace
       , uuidSeeds = uuidSeeds
@@ -240,6 +249,8 @@ init flags =
 
 type Msg
     = UserReceived (Result Decode.Error User)
+    | LogInWithGoogleClicked
+    | SetAdmin Bool
     | DecodeError Decode.Error
     | TopicChangesReceived TopicChanges
     | VotesReceived Votes
@@ -287,6 +298,12 @@ update msg model =
 
                 Err error ->
                     ( { model | error = Just (processParsingError error) }, Cmd.none )
+
+        LogInWithGoogleClicked ->
+            ( model, logInWithGoogle_ () )
+
+        SetAdmin isAdmin ->
+            ( { model | isAdmin = isAdmin }, Cmd.none )
 
         DecodeError error ->
             ( { model | error = Just (processParsingError error) }, Cmd.none )
@@ -346,28 +363,32 @@ update msg model =
         SaveTopic user ->
             case model.newTopicInput of
                 "" ->
-                    ({model | newTopicInput = ""}, Cmd.none)
+                    ( { model | newTopicInput = "" }, Cmd.none )
+
                 topic ->
+                    let
+                        ( uuid, newSeeds ) =
+                            UUID.step model.uuidSeeds
 
-                            let
-                                ( uuid, newSeeds ) =
-                                    UUID.step model.uuidSeeds
+                        topicId =
+                            UUID.toString uuid
 
-                                topicId = UUID.toString uuid
-
-                                newTopic = {topic = topic
-                                    , userId = user.id
-                                    , createdAt = model.timestampField}
-
-                                newRead = Set.insert topicId model.readTopics 
-                            in
-                            ( { model
-                                | newTopicInput = ""
-                                , readTopics = newRead
-                                , uuidSeeds = newSeeds
+                        newTopic =
+                            { topic = topic
+                            , userId = getUserId user
+                            , createdAt = model.timestampField
                             }
-                            , submitTopic model.workspace topicId newTopic
-                            )
+
+                        newRead =
+                            Set.insert topicId model.readTopics
+                    in
+                    ( { model
+                        | newTopicInput = ""
+                        , readTopics = newRead
+                        , uuidSeeds = newSeeds
+                      }
+                    , submitTopic model.workspace topicId newTopic
+                    )
 
         EditTopicClicked id ->
             let
@@ -752,6 +773,7 @@ view model =
                 , h1 [ css [ Css.margin zero ] ] [ text heading ]
                 ]
              ]
+                ++ [ settingsView model ]
                 ++ errorView model.error
                 ++ [ discussionView model inDiscussion continuationVotes model model.timerInput ]
                 ++ discussedTopics model discussedList
@@ -901,6 +923,36 @@ extract : (a -> Bool) -> List a -> ( Maybe a, List a )
 extract predicate list =
     List.partition predicate list
         |> Tuple.mapFirst List.head
+
+
+settingsView : Credentials a -> Html Msg
+settingsView credentials =
+    Html.details [ css [ detailsStyle ] ]
+        [ Html.summary [] [ text "Settings" ]
+        , Html.div [ css [ Css.paddingTop (rem 1) ] ]
+            (case credentials.user of
+                Loading ->
+                    [ Html.p [] [ text "Connecting…" ] ]
+
+                Got (AnonymousUser user) ->
+                    [ Html.p [] [ text ("Logged in anonymously as " ++ user.id ++ ".") ]
+                    , Html.button
+                        [ css [ buttonStyle ]
+                        , onClick LogInWithGoogleClicked
+                        ]
+                        [ text "Log in via Google" ]
+                    ]
+
+                Got (GoogleUser user) ->
+                    [ Html.p [] [ text ("Logged in via Google as " ++ user.email ++ ".") ]
+                    , if credentials.isAdmin then
+                        Html.button [ css [ buttonStyle ], onClick (SetAdmin False) ] [ text "Deactivate admin" ]
+
+                      else
+                        Html.button [ css [ buttonStyle ], onClick (SetAdmin True) ] [ text "Activate admin" ]
+                    ]
+            )
+        ]
 
 
 errorView : Maybe Error -> List (Html Msg)
@@ -1162,10 +1214,7 @@ discussedTopics model topics =
             in
             [ Html.details
                 [ css
-                    [ containerPadding
-                    , backgroundColor
-                    , borderRadius
-                    ]
+                    [ detailsStyle ]
                 ]
                 [ Html.summary [] [ text pluralizedHeading ]
                 , ol
@@ -1185,6 +1234,15 @@ discussedTopics model topics =
                     )
                 ]
             ]
+
+
+detailsStyle : Css.Style
+detailsStyle =
+    Css.batch
+        [ containerPadding
+        , backgroundColor
+        , borderRadius
+        ]
 
 
 continuationVote : Credentials a -> Maybe (List ContinuationVote) -> List (Html Msg)
@@ -1241,24 +1299,24 @@ continuationVoteButtons user continuationVotes =
         stayButton =
             voteButton user
                 (List.map .userId stayVotes)
-                { upvote = ContinuationVoteSent { userId = user.id, vote = Stay }
-                , downvote = RemoveContinuationVote user.id
+                { upvote = ContinuationVoteSent { userId = getUserId user, vote = Stay }
+                , downvote = RemoveContinuationVote (getUserId user)
                 }
                 (\count -> text <| "Discuss more (" ++ String.fromInt count ++ ")")
 
         abstainButton =
             voteButton user
                 (List.map .userId abstainVotes)
-                { upvote = ContinuationVoteSent { userId = user.id, vote = Abstain }
-                , downvote = RemoveContinuationVote user.id
+                { upvote = ContinuationVoteSent { userId = getUserId user, vote = Abstain }
+                , downvote = RemoveContinuationVote (getUserId user)
                 }
                 (\count -> text <| "Neutral (" ++ String.fromInt count ++ ")")
 
         moveOnButton =
             voteButton user
                 (List.map .userId moveOnVotes)
-                { upvote = ContinuationVoteSent { userId = user.id, vote = MoveOn }
-                , downvote = RemoveContinuationVote user.id
+                { upvote = ContinuationVoteSent { userId = getUserId user, vote = MoveOn }
+                , downvote = RemoveContinuationVote (getUserId user)
                 }
                 (\count -> text <| "Next topic (" ++ String.fromInt count ++ ")")
     in
@@ -1682,7 +1740,7 @@ voteButton user votes msgs content =
             List.length votes
 
         userAlreadyVoted =
-            List.any (\userId -> userId == user.id) votes
+            List.any (\userId -> userId == getUserId user) votes
 
         state =
             if userAlreadyVoted then
@@ -1762,7 +1820,7 @@ mayModify creds creator =
                 False
 
             Got user ->
-                user.id == creator
+                getUserId user == creator
 
 
 topicCard : List Css.Style -> List (Attribute Msg) -> { content : Html Msg, toolbar : List (Html Msg) } -> Html Msg
@@ -2259,6 +2317,9 @@ port receiveError_ : (Encode.Value -> msg) -> Sub msg
 port selectTextarea_ : String -> Cmd msg
 
 
+port logInWithGoogle_ : () -> Cmd msg
+
+
 
 -- DECODERS
 
@@ -2323,8 +2384,22 @@ dataField field decoder =
 
 userDecoder : Decoder User
 userDecoder =
-    Decode.field "id" Decode.string
-        |> Decode.map (\id -> { id = id })
+    Decode.field "provider" Decode.string
+        |> Decode.andThen
+            (\provider ->
+                case provider of
+                    "anonymous" ->
+                        Decode.field "id" Decode.string
+                            |> Decode.map (\id -> AnonymousUser { id = id })
+
+                    "google.com" ->
+                        Decode.map2 (\id email -> GoogleUser { id = id, email = email })
+                            (Decode.field "id" Decode.string)
+                            (Decode.field "email" Decode.string)
+
+                    _ ->
+                        Decode.fail ("Unkown provider `" ++ provider ++ "`.")
+            )
 
 
 timestampEncoder : Time.Posix -> Encode.Value
