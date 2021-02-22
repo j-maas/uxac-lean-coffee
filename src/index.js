@@ -50,24 +50,51 @@ const app = Elm.Main.init({
 
 firebase.auth().onAuthStateChanged((currentUser) => {
   if (currentUser !== null) {
-    const id = currentUser.uid;
-    console.log(`Existing user is logged in with id ${id}.`);
+    console.log(currentUser.providerData);
+    if (currentUser.isAnonymous) {
+      const id = currentUser.uid;
+      console.log(`Existing user is logged in anonymously with id ${id}.`);
 
-    app.ports.receiveUser_.send({ id });
+      app.ports.receiveUser_.send({ provider: "anonymous", id });
+    } else {
+      const provider = currentUser.providerData[0].providerId;
+      const id = currentUser.uid;
+      const email = currentUser.email;
+      console.log(`Existing user is logged in via ${provider} with id ${id}.`);
+
+      app.ports.receiveUser_.send({ provider, id, email });
+    }
 
   } else {
-    firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL) // Persist the authentication across page loads.
+    firebase.auth()
+      .setPersistence(firebase.auth.Auth.Persistence.LOCAL) // Persist the authentication across page loads.
       .then(() => {
         return firebase.auth().signInAnonymously();
       })
       .then(user => {
         const id = user.user.uid;
-        console.log(`New user is logged in with id ${id}.`);
+        console.log(`New user is logged in anonymously with id ${id}.`);
 
         app.ports.receiveUser_.send({ id });
       })
       .catch(sendErrorToElm);
   }
+});
+
+app.ports.logInWithGoogle_.subscribe(() => {
+  var provider = new firebase.auth.GoogleAuthProvider();
+  firebase.auth()
+    .setPersistence(firebase.auth.Auth.Persistence.LOCAL) // Persist the authentication across page loads.
+    .then(() => {
+      return firebase.auth().signInWithPopup(provider);
+    })
+    .then((result) => {
+      const user = result.user;
+      const id = user.uid;
+      const email = user.email;
+
+      app.ports.receiveUser_.send({ id });
+    }).catch(sendErrorToElm);
 });
 
 

@@ -131,7 +131,7 @@ type alias Vote =
 
 voteFrom : User -> TopicId -> Vote
 voteFrom user topicId =
-    { userId = user.id, topicId = topicId }
+    { userId = getUserId user, topicId = topicId }
 
 
 type alias ContinuationVote =
@@ -146,9 +146,19 @@ type Continuation
     | Abstain
 
 
-type alias User =
-    { id : UserId
-    }
+type User
+    = AnonymousUser { id : UserId }
+    | GoogleUser { id : UserId, email : String }
+
+
+getUserId : User -> UserId
+getUserId user =
+    case user of
+        AnonymousUser { id } ->
+            id
+
+        GoogleUser { id } ->
+            id
 
 
 type alias UserId =
@@ -240,6 +250,7 @@ init flags =
 
 type Msg
     = UserReceived (Result Decode.Error User)
+    | LogInWithGoogleClicked
     | DecodeError Decode.Error
     | TopicChangesReceived TopicChanges
     | VotesReceived Votes
@@ -287,6 +298,9 @@ update msg model =
 
                 Err error ->
                     ( { model | error = Just (processParsingError error) }, Cmd.none )
+
+        LogInWithGoogleClicked ->
+            ( model, logInWithGoogle_ () )
 
         DecodeError error ->
             ( { model | error = Just (processParsingError error) }, Cmd.none )
@@ -358,7 +372,7 @@ update msg model =
 
                         newTopic =
                             { topic = topic
-                            , userId = user.id
+                            , userId = getUserId user
                             , createdAt = model.timestampField
                             }
 
@@ -913,13 +927,23 @@ settingsView remoteUser =
     Html.details [ css [ detailsStyle ] ]
         [ Html.summary [] [ text "Settings" ]
         , Html.div [ css [ Css.paddingTop (rem 1) ] ]
-            [ case remoteUser of
+            (case remoteUser of
                 Loading ->
-                    text "Loading..."
+                    [ Html.p [] [ text "Connecting…" ] ]
 
-                Got user ->
-                    text ("Logged in as " ++ user.id)
-            ]
+                Got (AnonymousUser user) ->
+                    [ Html.p [] [ text ("Logged in anonymously as " ++ user.id ++ ".") ]
+                    , Html.button
+                        [ css [ buttonStyle ]
+                        , onClick LogInWithGoogleClicked
+                        ]
+                        [ text "Log in via Google" ]
+                    ]
+
+                Got (GoogleUser user) ->
+                    [ Html.p [] [ text ("Logged in via Google with email " ++ user.email ++ ".") ]
+                    ]
+            )
         ]
 
 
@@ -1267,24 +1291,24 @@ continuationVoteButtons user continuationVotes =
         stayButton =
             voteButton user
                 (List.map .userId stayVotes)
-                { upvote = ContinuationVoteSent { userId = user.id, vote = Stay }
-                , downvote = RemoveContinuationVote user.id
+                { upvote = ContinuationVoteSent { userId = getUserId user, vote = Stay }
+                , downvote = RemoveContinuationVote (getUserId user)
                 }
                 (\count -> text <| "Discuss more (" ++ String.fromInt count ++ ")")
 
         abstainButton =
             voteButton user
                 (List.map .userId abstainVotes)
-                { upvote = ContinuationVoteSent { userId = user.id, vote = Abstain }
-                , downvote = RemoveContinuationVote user.id
+                { upvote = ContinuationVoteSent { userId = getUserId user, vote = Abstain }
+                , downvote = RemoveContinuationVote (getUserId user)
                 }
                 (\count -> text <| "Neutral (" ++ String.fromInt count ++ ")")
 
         moveOnButton =
             voteButton user
                 (List.map .userId moveOnVotes)
-                { upvote = ContinuationVoteSent { userId = user.id, vote = MoveOn }
-                , downvote = RemoveContinuationVote user.id
+                { upvote = ContinuationVoteSent { userId = getUserId user, vote = MoveOn }
+                , downvote = RemoveContinuationVote (getUserId user)
                 }
                 (\count -> text <| "Next topic (" ++ String.fromInt count ++ ")")
     in
@@ -1708,7 +1732,7 @@ voteButton user votes msgs content =
             List.length votes
 
         userAlreadyVoted =
-            List.any (\userId -> userId == user.id) votes
+            List.any (\userId -> userId == getUserId user) votes
 
         state =
             if userAlreadyVoted then
@@ -1788,7 +1812,7 @@ mayModify creds creator =
                 False
 
             Got user ->
-                user.id == creator
+                getUserId user == creator
 
 
 topicCard : List Css.Style -> List (Attribute Msg) -> { content : Html Msg, toolbar : List (Html Msg) } -> Html Msg
@@ -2285,6 +2309,9 @@ port receiveError_ : (Encode.Value -> msg) -> Sub msg
 port selectTextarea_ : String -> Cmd msg
 
 
+port logInWithGoogle_ : () -> Cmd msg
+
+
 
 -- DECODERS
 
@@ -2349,8 +2376,22 @@ dataField field decoder =
 
 userDecoder : Decoder User
 userDecoder =
-    Decode.field "id" Decode.string
-        |> Decode.map (\id -> { id = id })
+    Decode.field "provider" Decode.string
+        |> Decode.andThen
+            (\provider ->
+                case provider of
+                    "anonymous" ->
+                        Decode.field "id" Decode.string
+                            |> Decode.map (\id -> AnonymousUser { id = id })
+
+                    "google.com" ->
+                        Decode.map2 (\id email -> GoogleUser { id = id, email = email })
+                            (Decode.field "id" Decode.string)
+                            (Decode.field "email" Decode.string)
+
+                    _ ->
+                        Decode.fail ("Unkown provider `" ++ provider ++ "`.")
+            )
 
 
 timestampEncoder : Time.Posix -> Encode.Value
