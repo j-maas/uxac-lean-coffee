@@ -29,7 +29,7 @@ const uuidSeeds = {
   seed2: randomValues[1],
   seed3: randomValues[2],
   seed4: randomValues[3],
-}
+};
 
 const flags = {
   timestampField: firebase.firestore.FieldValue.serverTimestamp(),
@@ -48,25 +48,38 @@ const app = Elm.Main.init({
 
 // Sign in and pass the user to Elm.
 
-firebase.auth().signInAnonymously()
-  .then(user => {
-    const id = user.user.uid
-    console.log(`User is logged in with id ${id}.`)
+firebase.auth().onAuthStateChanged((currentUser) => {
+  if (currentUser !== null) {
+    const id = currentUser.uid;
+    console.log(`Existing user is logged in with id ${id}.`);
 
-    app.ports.receiveUser_.send({ id: id })
-  })
-  .catch(sendErrorToElm);
+    app.ports.receiveUser_.send({ id });
+
+  } else {
+    firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL) // Persist the authentication across page loads.
+      .then(() => {
+        return firebase.auth().signInAnonymously();
+      })
+      .then(user => {
+        const id = user.user.uid;
+        console.log(`New user is logged in with id ${id}.`);
+
+        app.ports.receiveUser_.send({ id });
+      })
+      .catch(sendErrorToElm);
+  }
+});
 
 
 // Set up ports so that we can subscribe to collections and docs from Elm.
 
 app.ports.subscribe_.subscribe(info => {
   if (info.kind === "collection") {
-    subscribeToCollection(info.path, info.tag)
+    subscribeToCollection(info.path, info.tag);
   } else if (info.kind === "collectionChanges") {
-    subscribeToCollectionChanges(info.path, info.tag)
+    subscribeToCollectionChanges(info.path, info.tag);
   } else if (info.kind === "doc") {
-    subscribeToDoc(info.path, info.tag)
+    subscribeToDoc(info.path, info.tag);
   } else {
     console.error(`Invalid subscription kind ${info.kind}.`);
   }
@@ -90,7 +103,7 @@ function subscribeToCollection(path, tag) {
       tag: tag,
       data: docs,
     });
-  })
+  });
 }
 
 function subscribeToCollectionChanges(path, tag) {
@@ -112,7 +125,7 @@ function subscribeToCollectionChanges(path, tag) {
       tag: tag,
       data: changes,
     });
-  })
+  });
 }
 
 function subscribeToDoc(path, tag) {
@@ -126,7 +139,7 @@ function subscribeToDoc(path, tag) {
       tag: tag,
       data: doc,
     });
-  })
+  });
 }
 
 
@@ -146,7 +159,7 @@ app.ports.setDoc_.subscribe(info => {
   db.doc(info.path)
     .set(info.doc)
     .catch(sendErrorToElm);
-})
+});
 
 app.ports.deleteDocs_.subscribe(info => {
   console.log(`Deleting the docs at ${info.paths}`);
@@ -155,7 +168,7 @@ app.ports.deleteDocs_.subscribe(info => {
     db.doc(path)
       .delete()
       .catch(sendErrorToElm);
-  })
+  });
 });
 
 app.ports.selectTextarea_.subscribe(id => {
@@ -171,7 +184,7 @@ app.ports.selectTextarea_.subscribe(id => {
     textarea.focus();
     textarea.select();
   });
-})
+});
 
 function sendErrorToElm(error) {
   console.error(error);
