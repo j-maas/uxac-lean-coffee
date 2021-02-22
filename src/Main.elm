@@ -941,7 +941,7 @@ settingsView remoteUser =
                     ]
 
                 Got (GoogleUser user) ->
-                    [ Html.p [] [ text ("Logged in via Google with email " ++ user.email ++ ".") ]
+                    [ Html.p [] [ text ("Logged in via Google as " ++ user.email ++ ".") ]
                     ]
             )
         ]
