@@ -1923,7 +1923,6 @@ subscriptions model =
         [ receiveFirestoreSubscriptions
         , receiveUser_ (Decode.decodeValue userDecoder >> UserReceived)
         , receiveError_ (Decode.decodeValue firestoreErrorDecoder >> ErrorReceived)
-        , Time.every 1000 Tick
         ]
 
 
