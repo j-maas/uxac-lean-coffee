@@ -1825,23 +1825,15 @@ submitForm currentInput =
 
 newTopicForm : String -> Html Msg
 newTopicForm currentInput =
-    form
-        [ css [ Css.displayFlex, Css.flexDirection Css.column, Css.alignItems Css.flexStart ]
-        ]
-        [ label [ css [ Css.displayFlex, Css.flexDirection Css.column, Css.width (pct 100) ] ]
-            [ text "Add a topic"
-            , input
-                [ value currentInput
-                , onInput NewTopicInputChanged
-                , css
-                    [ inputStyle
-                    , Css.marginTop (rem 0.3)
-                    ]
-                ]
-                []
+    input
+        [ value currentInput
+        , onInput NewTopicInputChanged
+        , css
+            [ inputStyle
+            , Css.marginTop (rem 0.3)
             ]
-        , input [ type_ "submit", value "Submit", css [ buttonStyle, Css.marginTop (rem 1) ] ] []
         ]
+        []
 
 
 inputStyle : Css.Style
