@@ -748,39 +748,7 @@ view model =
         { inDiscussion, topicList, discussedList } =
             processTopics model
     in
-    div
-        [ css
-            [ bodyFont
-            , Global.descendants [ Global.h2 [ headingStyle ] ]
-            , Css.margin2 zero auto
-            ]
-        ]
-        [ div
-            [ css
-                [ limitWidth
-                , Css.marginBottom (rem 1)
-                , listItemSpacing
-                ]
-            ]
-            ([ div
-                [ css
-                    [ Css.displayFlex
-                    , Css.flexDirection Css.row
-                    , Css.alignItems Css.center
-                    ]
-                ]
-                [ logo
-                , h1 [ css [ Css.margin zero ] ] [ text heading ]
-                ]
-             ]
-                ++ [ settingsView model ]
-                ++ errorView model.error
-                ++ [ discussionView model inDiscussion continuationVotes model model.timerInput ]
-                ++ discussedTopics model discussedList
-                ++ [ topicEntry model.user model.newTopicInput ]
-            )
-        , topicsToVote model topicList (sortBarView model.votes model.topics)
-        ]
+    topicEntry model.user model.newTopicInput
 
 
 logo : Html Msg
