@@ -748,7 +748,7 @@ view model =
         { inDiscussion, topicList, discussedList } =
             processTopics model
     in
-    topicEntry model.user model.newTopicInput
+    topicEntry model.newTopicInput
 
 
 logo : Html Msg
@@ -1306,16 +1306,9 @@ continuationVoteButtons user continuationVotes =
         [ stayButton, abstainButton, moveOnButton ]
 
 
-topicEntry : Remote User -> String -> Html Msg
-topicEntry user newTopicInput =
-    div
-        [ css
-            [ containerPadding
-            , borderRadius
-            , backgroundColor
-            ]
-        ]
-        [ submitForm user newTopicInput ]
+topicEntry : String -> Html Msg
+topicEntry newTopicInput =
+    submitForm newTopicInput
 
 
 topicsToVote : Credentials a -> Remote (List TopicWithVotes) -> Html Msg -> Html Msg
@@ -1825,21 +1818,15 @@ topicCard styles attributes { content, toolbar } =
         ]
 
 
-submitForm : Remote User -> String -> Html Msg
-submitForm fetchedUser currentInput =
-    case fetchedUser of
-        Loading ->
-            text "Connecting…"
-
-        Got user ->
-            newTopicForm user currentInput
+submitForm : String -> Html Msg
+submitForm currentInput =
+    newTopicForm currentInput
 
 
-newTopicForm : User -> String -> Html Msg
-newTopicForm user currentInput =
+newTopicForm : String -> Html Msg
+newTopicForm currentInput =
     form
         [ css [ Css.displayFlex, Css.flexDirection Css.column, Css.alignItems Css.flexStart ]
-        , onSubmit (SaveTopic user)
         ]
         [ label [ css [ Css.displayFlex, Css.flexDirection Css.column, Css.width (pct 100) ] ]
             [ text "Add a topic"
