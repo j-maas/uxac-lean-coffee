@@ -928,8 +928,8 @@ extract predicate list =
 settingsView : Credentials a -> Html Msg
 settingsView credentials =
     Html.details [ css [ detailsStyle ] ]
-        [ Html.summary [] [ text "Settings" ]
-        , Html.div [ css [ Css.paddingTop (rem 1) ] ]
+        [ Html.summary [] [ text "Settings & Privacy Policy" ]
+        , Html.div [ css [ Css.marginTop (rem 1) ] ]
             (case credentials.user of
                 Loading ->
                     [ Html.p [] [ text "Connecting…" ] ]
@@ -952,6 +952,14 @@ settingsView credentials =
                         Html.button [ css [ buttonStyle ], onClick (SetAdmin True) ] [ text "Activate admin" ]
                     ]
             )
+        , Html.div [ css [ Css.marginTop (rem 2) ] ]
+            [ Html.h2 [] [ Html.text "Privacy Policy" ]
+            , Html.p [] [ Html.text "We use ", Html.a [ Attributes.href "https://firebase.google.com/" ] [ Html.text "Google Firebase" ], Html.text ". Specifically, we use its Authentication, Cloud Firestore and Hosting services. You can read their ", Html.a [ Attributes.href "https://firebase.google.com/terms/" ] [ Html.text "Terms of Service" ], Html.text ", their ", Html.a [ Attributes.href "https://firebase.google.com/terms/data-processing-terms" ] [ Html.text "Data Processing and Security Terms" ], Html.text ", and their support page on ", Html.a [ Attributes.href "https://firebase.google.com/support/privacy" ] [ Html.text "Privacy and Security" ], Html.text "." ]
+            , Html.p []
+                [ Html.text "When you open the app, we log you in using Firebase Authentication with an anonymous account to authenticate you. You can also optionally log in with a Google account. This helps us ensure that only you can edit your topics and only admins can moderate the discussion."
+                ]
+            , Html.p [] [ Html.text "The data you send us is stored in Cloud Firestore. The app maintainers have access to it and may modify or delete it at their discretion. To request a copy, modification, or deletion of your data, please contact us at ", Html.a [ Attributes.href "mailto:uxac-lean-coffee@googlegroups.com" ] [ Html.text "uxac-lean-coffee@googlegroups.com" ], Html.text "." ]
+            ]
         ]
 
 
