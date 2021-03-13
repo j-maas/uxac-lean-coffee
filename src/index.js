@@ -61,6 +61,19 @@ firebase.auth().onAuthStateChanged((currentUser) => {
       console.log(`User is logged in via ${provider} with id ${id}.`);
 
       app.ports.receiveUser_.send({ provider, id, email });
+
+      console.debug("Checking admin rights.");
+      db.collection("admins").doc(id).get()
+        .then(() => {
+          app.ports.receiveIsAdmin_.send(true);
+        })
+        .catch(error => {
+          if (error.code === "permission-denied") {
+            app.ports.receiveIsAdmin_.send(false);
+          } else {
+            sendErrorToElm(error);
+          }
+        });
     }
 
   } else {
@@ -79,7 +92,7 @@ app.ports.logInWithGoogle_.subscribe(() => {
   firebase.auth()
     .setPersistence(firebase.auth.Auth.Persistence.LOCAL) // Persist the authentication across page loads.
     .then(() => {
-      console.log("Loggin in user via google.com.");
+      console.log("Logging in user via google.com.");
       return firebase.auth().signInWithRedirect(provider);
     })
     .catch(sendErrorToElm);

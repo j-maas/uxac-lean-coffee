@@ -148,7 +148,7 @@ type Continuation
 
 type User
     = AnonymousUser { id : UserId }
-    | GoogleUser { id : UserId, email : String }
+    | GoogleUser { id : UserId, email : String, isAdmin : Remote Bool }
 
 
 getUserId : User -> UserId
@@ -249,6 +249,7 @@ init flags =
 
 type Msg
     = UserReceived (Result Decode.Error User)
+    | IsAdminReceived Bool
     | LogInWithGoogleClicked
     | SetAdmin Bool
     | DecodeError Decode.Error
@@ -298,6 +299,18 @@ update msg model =
 
                 Err error ->
                     ( { model | error = Just (processParsingError error) }, Cmd.none )
+
+        IsAdminReceived isAdmin ->
+            let
+                newUser =
+                    case model.user of
+                        Got (GoogleUser user) ->
+                            Got (GoogleUser { user | isAdmin = Got isAdmin })
+
+                        user ->
+                            user
+            in
+            ( { model | user = newUser }, Cmd.none )
 
         LogInWithGoogleClicked ->
             ( model, logInWithGoogle_ () )
@@ -1954,6 +1967,7 @@ subscriptions model =
     Sub.batch
         [ receiveFirestoreSubscriptions
         , receiveUser_ (Decode.decodeValue userDecoder >> UserReceived)
+        , receiveIsAdmin_ IsAdminReceived
         , receiveError_ (Decode.decodeValue firestoreErrorDecoder >> ErrorReceived)
         , Time.every 1000 Tick
         ]
@@ -2319,6 +2333,9 @@ port deleteDocs_ : Encode.Value -> Cmd msg
 port receiveUser_ : (Encode.Value -> msg) -> Sub msg
 
 
+port receiveIsAdmin_ : (Bool -> msg) -> Sub msg
+
+
 port receiveError_ : (Encode.Value -> msg) -> Sub msg
 
 
@@ -2401,7 +2418,7 @@ userDecoder =
                             |> Decode.map (\id -> AnonymousUser { id = id })
 
                     "google.com" ->
-                        Decode.map2 (\id email -> GoogleUser { id = id, email = email })
+                        Decode.map2 (\id email -> GoogleUser { id = id, email = email, isAdmin = Loading })
                             (Decode.field "id" Decode.string)
                             (Decode.field "email" Decode.string)
 
