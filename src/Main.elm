@@ -987,25 +987,28 @@ settingsView remoteUser =
                         settings =
                             if Remote.toMaybe user.isAdmin |> Maybe.withDefault False then
                                 if isAdminActiveForUser remoteUser then
-                                    Html.button [ css [ buttonStyle ], onClick (SetAdmin False) ] [ text "Deactivate admin" ]
+                                    [ Html.button [ css [ buttonStyle ], onClick (SetAdmin False) ] [ text "Deactivate admin" ] ]
 
                                 else
-                                    Html.button [ css [ buttonStyle ], onClick (SetAdmin True) ] [ text "Activate admin" ]
+                                    [ Html.button [ css [ buttonStyle ], onClick (SetAdmin True) ] [ text "Activate admin" ] ]
 
                             else
-                                Html.p [ css [ Css.fontStyle Css.italic ] ]
-                                    [ text "You do not have admin rights. Ask someone who manages this app to add you as an admin and tell them the email address you are logged in with."
+                                [ Html.p [ css [ Css.fontStyle Css.italic ] ]
+                                    [ text "You do not have moderator rights, so you cannot activate the moderator tools." ]
+                                , Html.p [ css [ Css.fontStyle Css.italic ] ]
+                                    [ text "If you would like to become a moderator, ask someone who manages this app to add you to the list of moderators and tell them the email address you are logged in with."
                                     ]
+                                ]
                     in
                     [ Html.p [] [ text ("Logged in via Google as " ++ user.email ++ ".") ]
-                    , settings
                     ]
+                        ++ settings
             )
         , Html.div [ css [ Css.marginTop (rem 2) ] ]
             [ Html.h2 [] [ Html.text "Privacy Policy" ]
             , Html.p [] [ Html.text "We use ", Html.a [ Attributes.href "https://firebase.google.com/" ] [ Html.text "Google Firebase" ], Html.text ". Specifically, we use its Authentication, Cloud Firestore and Hosting services. You can read their ", Html.a [ Attributes.href "https://firebase.google.com/terms/" ] [ Html.text "Terms of Service" ], Html.text ", their ", Html.a [ Attributes.href "https://firebase.google.com/terms/data-processing-terms" ] [ Html.text "Data Processing and Security Terms" ], Html.text ", and their support page on ", Html.a [ Attributes.href "https://firebase.google.com/support/privacy" ] [ Html.text "Privacy and Security" ], Html.text "." ]
             , Html.p []
-                [ Html.text "When you open the app, we log you in using Firebase Authentication with an anonymous account to authenticate you. You can also optionally log in with a Google account. This helps us ensure that only you can edit your topics and only admins can moderate the discussion."
+                [ Html.text "When you open the app, we log you in using Firebase Authentication with an anonymous account to authenticate you. You can also optionally log in with a Google account so that we can give you moderator rights. This helps us ensure that only you can edit your topics and only admins can moderate the discussion."
                 ]
             , Html.p [] [ Html.text "The data you send us is stored in Cloud Firestore. The app maintainers have access to it and may modify or delete it at their discretion. To request a copy, modification, or deletion of your data, please contact us at ", Html.a [ Attributes.href "mailto:uxac-lean-coffee@googlegroups.com" ] [ Html.text "uxac-lean-coffee@googlegroups.com" ], Html.text "." ]
             ]
