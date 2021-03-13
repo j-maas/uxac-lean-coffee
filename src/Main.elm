@@ -985,11 +985,17 @@ settingsView remoteUser =
                 Got (GoogleUser user) ->
                     let
                         settings =
-                            if isAdminActiveForUser remoteUser then
-                                Html.button [ css [ buttonStyle ], onClick (SetAdmin False) ] [ text "Deactivate admin" ]
+                            if Remote.toMaybe user.isAdmin |> Maybe.withDefault False then
+                                if isAdminActiveForUser remoteUser then
+                                    Html.button [ css [ buttonStyle ], onClick (SetAdmin False) ] [ text "Deactivate admin" ]
+
+                                else
+                                    Html.button [ css [ buttonStyle ], onClick (SetAdmin True) ] [ text "Activate admin" ]
 
                             else
-                                Html.button [ css [ buttonStyle ], onClick (SetAdmin True) ] [ text "Activate admin" ]
+                                Html.p [ css [ Css.fontStyle Css.italic ] ]
+                                    [ text "You do not have admin rights. Ask someone who manages this app to add you as an admin and tell them the email address you are logged in with."
+                                    ]
                     in
                     [ Html.p [] [ text ("Logged in via Google as " ++ user.email ++ ".") ]
                     , settings
