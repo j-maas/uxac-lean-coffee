@@ -48,7 +48,6 @@ type alias Model =
     , timerInput : String
     , newTopicInput : String
     , user : Remote User
-    , isAdmin : Bool
     , error : Maybe Error
     , workspace : Maybe String
     , uuidSeeds : UUID.Seeds
@@ -148,7 +147,32 @@ type Continuation
 
 type User
     = AnonymousUser { id : UserId }
-    | GoogleUser { id : UserId, email : String }
+    | GoogleUser { id : UserId, email : String, isAdmin : Remote Bool, adminActive : Bool }
+
+
+setAdminActiveForUser : Bool -> Remote User -> Remote User
+setAdminActiveForUser adminActive remoteUser =
+    case remoteUser of
+        Got (GoogleUser user) ->
+            Got (GoogleUser { user | adminActive = adminActive })
+
+        user ->
+            user
+
+
+isAdminActiveForUser : Remote User -> Bool
+isAdminActiveForUser user =
+    case user of
+        Got (GoogleUser googleUser) ->
+            let
+                isAdmin =
+                    Remote.toMaybe googleUser.isAdmin
+                        |> Maybe.withDefault False
+            in
+            isAdmin && googleUser.adminActive
+
+        _ ->
+            False
 
 
 getUserId : User -> UserId
@@ -233,7 +257,6 @@ init flags =
       , timerInput = "10"
       , newTopicInput = ""
       , user = Loading
-      , isAdmin = False
       , error = Nothing
       , workspace = workspace
       , uuidSeeds = uuidSeeds
@@ -249,6 +272,7 @@ init flags =
 
 type Msg
     = UserReceived (Result Decode.Error User)
+    | IsAdminReceived Bool
     | LogInWithGoogleClicked
     | SetAdmin Bool
     | DecodeError Decode.Error
@@ -299,11 +323,23 @@ update msg model =
                 Err error ->
                     ( { model | error = Just (processParsingError error) }, Cmd.none )
 
+        IsAdminReceived isAdmin ->
+            let
+                newUser =
+                    case model.user of
+                        Got (GoogleUser user) ->
+                            Got (GoogleUser { user | isAdmin = Got isAdmin })
+
+                        user ->
+                            user
+            in
+            ( { model | user = newUser }, Cmd.none )
+
         LogInWithGoogleClicked ->
             ( model, logInWithGoogle_ () )
 
         SetAdmin isAdmin ->
-            ( { model | isAdmin = isAdmin }, Cmd.none )
+            ( { model | user = setAdminActiveForUser isAdmin model.user }, Cmd.none )
 
         DecodeError error ->
             ( { model | error = Just (processParsingError error) }, Cmd.none )
@@ -729,9 +765,12 @@ clearDeadline workspace =
 view : Model -> Html Msg
 view model =
     let
+        isAdmin =
+            isAdminActiveForUser model.user
+
         heading =
             "UXAC Lean Coffee"
-                ++ (if model.isAdmin then
+                ++ (if isAdmin then
                         " (Admin)"
 
                     else
@@ -773,13 +812,13 @@ view model =
                 , h1 [ css [ Css.margin zero ] ] [ text heading ]
                 ]
              ]
-                ++ [ settingsView model ]
+                ++ [ settingsView model.user ]
                 ++ errorView model.error
-                ++ [ discussionView model inDiscussion continuationVotes model model.timerInput ]
-                ++ discussedTopics model discussedList
+                ++ [ discussionView model.user inDiscussion continuationVotes model model.timerInput ]
+                ++ discussedTopics model.user discussedList
                 ++ [ topicEntry model.user model.newTopicInput ]
             )
-        , topicsToVote model topicList (sortBarView model.votes model.topics)
+        , topicsToVote model.user topicList (sortBarView model.votes model.topics)
         ]
 
 
@@ -925,12 +964,12 @@ extract predicate list =
         |> Tuple.mapFirst List.head
 
 
-settingsView : Credentials a -> Html Msg
-settingsView credentials =
+settingsView : Remote User -> Html Msg
+settingsView remoteUser =
     Html.details [ css [ detailsStyle ] ]
         [ Html.summary [] [ text "Settings & Privacy Policy" ]
         , Html.div [ css [ Css.marginTop (rem 1) ] ]
-            (case credentials.user of
+            (case remoteUser of
                 Loading ->
                     [ Html.p [] [ text "Connecting…" ] ]
 
@@ -944,19 +983,32 @@ settingsView credentials =
                     ]
 
                 Got (GoogleUser user) ->
-                    [ Html.p [] [ text ("Logged in via Google as " ++ user.email ++ ".") ]
-                    , if credentials.isAdmin then
-                        Html.button [ css [ buttonStyle ], onClick (SetAdmin False) ] [ text "Deactivate admin" ]
+                    let
+                        settings =
+                            if Remote.toMaybe user.isAdmin |> Maybe.withDefault False then
+                                if isAdminActiveForUser remoteUser then
+                                    [ Html.button [ css [ buttonStyle ], onClick (SetAdmin False) ] [ text "Deactivate admin" ] ]
 
-                      else
-                        Html.button [ css [ buttonStyle ], onClick (SetAdmin True) ] [ text "Activate admin" ]
+                                else
+                                    [ Html.button [ css [ buttonStyle ], onClick (SetAdmin True) ] [ text "Activate admin" ] ]
+
+                            else
+                                [ Html.p [ css [ Css.fontStyle Css.italic ] ]
+                                    [ text "You do not have moderator rights, so you cannot activate the moderator tools." ]
+                                , Html.p [ css [ Css.fontStyle Css.italic ] ]
+                                    [ text "If you would like to become a moderator, ask someone who manages this app to add you to the list of moderators and tell them the email address you are logged in with."
+                                    ]
+                                ]
+                    in
+                    [ Html.p [] [ text ("Logged in via Google as " ++ user.email ++ ".") ]
                     ]
+                        ++ settings
             )
         , Html.div [ css [ Css.marginTop (rem 2) ] ]
             [ Html.h2 [] [ Html.text "Privacy Policy" ]
             , Html.p [] [ Html.text "We use ", Html.a [ Attributes.href "https://firebase.google.com/" ] [ Html.text "Google Firebase" ], Html.text ". Specifically, we use its Authentication, Cloud Firestore and Hosting services. You can read their ", Html.a [ Attributes.href "https://firebase.google.com/terms/" ] [ Html.text "Terms of Service" ], Html.text ", their ", Html.a [ Attributes.href "https://firebase.google.com/terms/data-processing-terms" ] [ Html.text "Data Processing and Security Terms" ], Html.text ", and their support page on ", Html.a [ Attributes.href "https://firebase.google.com/support/privacy" ] [ Html.text "Privacy and Security" ], Html.text "." ]
             , Html.p []
-                [ Html.text "When you open the app, we log you in using Firebase Authentication with an anonymous account to authenticate you. You can also optionally log in with a Google account. This helps us ensure that only you can edit your topics and only admins can moderate the discussion."
+                [ Html.text "When you open the app, we log you in using Firebase Authentication with an anonymous account to authenticate you. You can also optionally log in with a Google account so that we can give you moderator rights. This helps us ensure that only you can edit your topics and only admins can moderate the discussion."
                 ]
             , Html.p [] [ Html.text "The data you send us is stored in Cloud Firestore. The app maintainers have access to it and may modify or delete it at their discretion. To request a copy, modification, or deletion of your data, please contact us at ", Html.a [ Attributes.href "mailto:uxac-lean-coffee@googlegroups.com" ] [ Html.text "uxac-lean-coffee@googlegroups.com" ], Html.text "." ]
             ]
@@ -1015,7 +1067,7 @@ errorView maybeError =
 
 
 discussionView :
-    Credentials a
+    Remote User
     -> Maybe TopicWithVotes
     -> Maybe (List ContinuationVote)
     -> { b | now : Maybe Time.Posix, deadline : Maybe Time.Posix }
@@ -1061,11 +1113,11 @@ discussionView creds maybeDiscussedTopic continuationVotes times timerInput =
 
 
 remainingTime :
-    Credentials a
+    Remote User
     -> { b | now : Maybe Time.Posix, deadline : Maybe Time.Posix }
     -> String
     -> Html Msg
-remainingTime creds times currentInput =
+remainingTime remoteUser times currentInput =
     case times.now of
         Nothing ->
             div [] [ text "Loading timer…" ]
@@ -1076,7 +1128,7 @@ remainingTime creds times currentInput =
                     remainingTimeDisplay { now = now, deadline = times.deadline }
 
                 maybeTimeInput =
-                    if creds.isAdmin then
+                    if isAdminActiveForUser remoteUser then
                         [ remainingTimeInput currentInput ]
 
                     else
@@ -1204,7 +1256,7 @@ backgroundColor =
     Css.backgroundColor (Css.hsl primaryHue 0.2 0.95)
 
 
-discussedTopics : Credentials a -> List TopicWithVotes -> List (Html Msg)
+discussedTopics : Remote User -> List TopicWithVotes -> List (Html Msg)
 discussedTopics model topics =
     case List.length topics of
         0 ->
@@ -1253,16 +1305,16 @@ detailsStyle =
         ]
 
 
-continuationVote : Credentials a -> Maybe (List ContinuationVote) -> List (Html Msg)
-continuationVote creds maybeContinuationVotes =
-    case creds.user of
+continuationVote : Remote User -> Maybe (List ContinuationVote) -> List (Html Msg)
+continuationVote remoteUser maybeContinuationVotes =
+    case remoteUser of
         Loading ->
             []
 
         Got user ->
             let
                 maybeAdminButtons =
-                    if creds.isAdmin then
+                    if isAdminActiveForUser remoteUser then
                         case maybeContinuationVotes of
                             Nothing ->
                                 [ button
@@ -1350,7 +1402,7 @@ topicEntry user newTopicInput =
         [ submitForm user newTopicInput ]
 
 
-topicsToVote : Credentials a -> Remote (List TopicWithVotes) -> Html Msg -> Html Msg
+topicsToVote : Remote User -> Remote (List TopicWithVotes) -> Html Msg -> Html Msg
 topicsToVote creds remoteTopics toolbar =
     div
         [ css
@@ -1413,7 +1465,7 @@ topicsToVote creds remoteTopics toolbar =
         ]
 
 
-topicsToVoteList : Credentials a -> List TopicWithVotes -> Html Msg -> Html Msg
+topicsToVoteList : Remote User -> List TopicWithVotes -> Html Msg -> Html Msg
 topicsToVoteList creds topics toolbar =
     let
         breakpoint =
@@ -1539,21 +1591,17 @@ sortButton =
     button [ css [ buttonStyle ], onClick SortTopics ] [ text "Sort" ]
 
 
-type alias Credentials a =
-    { a | user : Remote User, isAdmin : Bool }
-
-
-topicToDiscussCard : Credentials a -> TopicWithVotes -> Html Msg
-topicToDiscussCard creds ( topicId, entry ) =
+topicToDiscussCard : Remote User -> TopicWithVotes -> Html Msg
+topicToDiscussCard remoteUser ( topicId, entry ) =
     let
         voteCount =
             List.length entry.votes
 
         mayMod =
-            mayModify creds entry.topic.creator
+            mayModify remoteUser entry.topic.creator
 
         maybeVoteAgainButton =
-            if creds.isAdmin then
+            if isAdminActiveForUser remoteUser then
                 [ button
                     [ css [ buttonStyle ]
                     , onClick VoteAgainClicked
@@ -1565,7 +1613,7 @@ topicToDiscussCard creds ( topicId, entry ) =
                 []
 
         maybeFinishButton =
-            if creds.isAdmin then
+            if isAdminActiveForUser remoteUser then
                 [ button
                     [ css [ buttonStyle ]
                     , onClick FinishDiscussionClicked
@@ -1577,7 +1625,7 @@ topicToDiscussCard creds ( topicId, entry ) =
                 []
 
         maybeDeleteButton =
-            if creds.isAdmin then
+            if isAdminActiveForUser remoteUser then
                 [ deleteButton topicId
                 ]
 
@@ -1596,18 +1644,18 @@ topicToDiscussCard creds ( topicId, entry ) =
         }
 
 
-topicToVoteCard : Credentials a -> TopicWithVotes -> Html Msg
-topicToVoteCard creds ( topicId, entry ) =
+topicToVoteCard : Remote User -> TopicWithVotes -> Html Msg
+topicToVoteCard remoteUser ( topicId, entry ) =
     let
         maybeDiscussButton =
-            if creds.isAdmin then
+            if isAdminActiveForUser remoteUser then
                 [ button [ onClick (Discuss topicId), css [ buttonStyle ] ] [ text "Discuss" ] ]
 
             else
                 []
 
         mayMod =
-            mayModify creds entry.topic.creator
+            mayModify remoteUser entry.topic.creator
 
         content =
             case entry.beingEdited of
@@ -1688,13 +1736,13 @@ topicToVoteCard creds ( topicId, entry ) =
         attributes
         { content = content
         , toolbar =
-            maybeTopicVoteButton creds.user ( topicId, entry )
+            maybeTopicVoteButton remoteUser ( topicId, entry )
                 ++ maybeDiscussButton
                 ++ maybeDeleteButton
         }
 
 
-finishedTopicCard : Credentials a -> TopicWithVotes -> Html Msg
+finishedTopicCard : Remote User -> TopicWithVotes -> Html Msg
 finishedTopicCard creds ( topicId, entry ) =
     let
         voteCount =
@@ -1817,13 +1865,13 @@ deleteButton topicId =
         [ text "Delete" ]
 
 
-mayModify : Credentials a -> UserId -> Bool
-mayModify creds creator =
-    if creds.isAdmin then
+mayModify : Remote User -> UserId -> Bool
+mayModify remoteUser creator =
+    if isAdminActiveForUser remoteUser then
         True
 
     else
-        case creds.user of
+        case remoteUser of
             Loading ->
                 False
 
@@ -1954,6 +2002,7 @@ subscriptions model =
     Sub.batch
         [ receiveFirestoreSubscriptions
         , receiveUser_ (Decode.decodeValue userDecoder >> UserReceived)
+        , receiveIsAdmin_ IsAdminReceived
         , receiveError_ (Decode.decodeValue firestoreErrorDecoder >> ErrorReceived)
         , Time.every 1000 Tick
         ]
@@ -2319,6 +2368,9 @@ port deleteDocs_ : Encode.Value -> Cmd msg
 port receiveUser_ : (Encode.Value -> msg) -> Sub msg
 
 
+port receiveIsAdmin_ : (Bool -> msg) -> Sub msg
+
+
 port receiveError_ : (Encode.Value -> msg) -> Sub msg
 
 
@@ -2401,7 +2453,15 @@ userDecoder =
                             |> Decode.map (\id -> AnonymousUser { id = id })
 
                     "google.com" ->
-                        Decode.map2 (\id email -> GoogleUser { id = id, email = email })
+                        Decode.map2
+                            (\id email ->
+                                GoogleUser
+                                    { id = id
+                                    , email = email
+                                    , isAdmin = Loading
+                                    , adminActive = False
+                                    }
+                            )
                             (Decode.field "id" Decode.string)
                             (Decode.field "email" Decode.string)
 
