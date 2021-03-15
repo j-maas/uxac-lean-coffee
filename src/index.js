@@ -134,7 +134,7 @@ function subscribeToCollection(path, tag) {
       tag: tag,
       data: docs,
     });
-  });
+  }, sendErrorToElm);
 }
 
 function subscribeToCollectionChanges(path, tag) {
@@ -156,7 +156,7 @@ function subscribeToCollectionChanges(path, tag) {
       tag: tag,
       data: changes,
     });
-  });
+  }, sendErrorToElm);
 }
 
 function subscribeToDoc(path, tag) {
@@ -170,7 +170,7 @@ function subscribeToDoc(path, tag) {
       tag: tag,
       data: doc,
     });
-  });
+  }, sendErrorToElm);
 }
 
 
