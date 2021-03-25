@@ -290,8 +290,8 @@ type Msg
     | SaveTopicClicked TopicId
     | DeleteTopic TopicId
     | Discuss TopicId
-    | FinishDiscussionClicked
-    | VoteAgainClicked
+    | MoveToDiscussedClicked
+    | MoveToSuggestedClicked
     | SortTopics
     | Upvote User TopicId
     | RemoveUpvote User TopicId
@@ -480,7 +480,7 @@ update msg model =
         Discuss topicId ->
             ( model, submitTopicInDiscussion model.workspace topicId )
 
-        FinishDiscussionClicked ->
+        MoveToDiscussedClicked ->
             case model.inDiscussion of
                 Just inDiscussion ->
                     let
@@ -496,7 +496,7 @@ update msg model =
                 Nothing ->
                     ( model, Cmd.none )
 
-        VoteAgainClicked ->
+        MoveToSuggestedClicked ->
             case model.inDiscussion of
                 Just inDiscussion ->
                     ( model, removeTopicInDiscussion model.workspace )
@@ -1512,11 +1512,16 @@ listUnstyle =
 
 listItemSpacing : Css.Style
 listItemSpacing =
+    spaceChildren (Css.marginTop (rem 1))
+
+
+spaceChildren : Css.Style -> Css.Style
+spaceChildren spacing =
     Global.children
         [ Global.everything
             [ Global.adjacentSiblings
                 [ Global.everything
-                    [ Css.marginTop (rem 1)
+                    [ spacing
                     ]
                 ]
             ]
@@ -1600,30 +1605,6 @@ topicToDiscussCard remoteUser ( topicId, entry ) =
         mayMod =
             mayModify remoteUser entry.topic.creator
 
-        maybeVoteAgainButton =
-            if isAdminActiveForUser remoteUser then
-                [ button
-                    [ css [ buttonStyle ]
-                    , onClick VoteAgainClicked
-                    ]
-                    [ text "Vote again" ]
-                ]
-
-            else
-                []
-
-        maybeFinishButton =
-            if isAdminActiveForUser remoteUser then
-                [ button
-                    [ css [ buttonStyle ]
-                    , onClick FinishDiscussionClicked
-                    ]
-                    [ text "Finish" ]
-                ]
-
-            else
-                []
-
         maybeDeleteButton =
             if isAdminActiveForUser remoteUser then
                 [ deleteButton topicId
@@ -1631,16 +1612,49 @@ topicToDiscussCard remoteUser ( topicId, entry ) =
 
             else
                 []
+
+        cardButtons =
+            votesIndicator voteCount :: maybeDeleteButton
+
+        maybeMoveSection =
+            if isAdminActiveForUser remoteUser then
+                [ div
+                    [ css
+                        [ Css.displayFlex
+                        , Css.flexDirection Css.row
+                        , Css.alignItems Css.center
+                        , spaceChildren (Css.marginLeft (rem 0.5))
+                        ]
+                    ]
+                    [ Html.span [] [ text "Move this to:" ]
+                    , button
+                        [ css [ buttonStyle ]
+                        , onClick MoveToDiscussedClicked
+                        ]
+                        [ text "Discussed topics" ]
+                    , button
+                        [ css [ buttonStyle ]
+                        , onClick MoveToSuggestedClicked
+                        ]
+                        [ text "Suggested topics" ]
+                    ]
+                ]
+
+            else
+                []
+
+        toolbar =
+            [ div [ css [ spaceChildren (Css.marginTop (rem 0.5)) ] ]
+                (toolbarRow cardButtons
+                    :: maybeMoveSection
+                )
+            ]
     in
     topicCard
         []
         []
         { content = text entry.topic.topic
-        , toolbar =
-            [ votesIndicator voteCount ]
-                ++ maybeFinishButton
-                ++ maybeVoteAgainButton
-                ++ maybeDeleteButton
+        , toolbar = toolbar
         }
 
 
@@ -1736,9 +1750,12 @@ topicToVoteCard remoteUser ( topicId, entry ) =
         attributes
         { content = content
         , toolbar =
-            maybeTopicVoteButton remoteUser ( topicId, entry )
-                ++ maybeDiscussButton
-                ++ maybeDeleteButton
+            [ toolbarRow
+                (maybeTopicVoteButton remoteUser ( topicId, entry )
+                    ++ maybeDiscussButton
+                    ++ maybeDeleteButton
+                )
+            ]
         }
 
 
@@ -1763,8 +1780,11 @@ finishedTopicCard creds ( topicId, entry ) =
         []
         { content = text entry.topic.topic
         , toolbar =
-            [ votesIndicator voteCount ]
-                ++ maybeDeleteButton
+            [ toolbarRow
+                ([ votesIndicator voteCount ]
+                    ++ maybeDeleteButton
+                )
+            ]
         }
 
 
@@ -1894,15 +1914,24 @@ topicCard styles attributes { content, toolbar } =
             , div
                 [ css
                     [ Css.marginTop (rem 1)
-                    , Css.displayFlex
-                    , Css.flexDirection Css.row
-                    , Css.flexWrap Css.wrap
-                    , Css.justifyContent Css.spaceBetween
                     ]
                 ]
                 toolbar
             ]
         ]
+
+
+toolbarRow : List (Html Msg) -> Html Msg
+toolbarRow content =
+    div
+        [ css
+            [ Css.displayFlex
+            , Css.flexDirection Css.row
+            , Css.flexWrap Css.wrap
+            , Css.justifyContent Css.spaceBetween
+            ]
+        ]
+        content
 
 
 submitForm : Remote User -> String -> Html Msg
