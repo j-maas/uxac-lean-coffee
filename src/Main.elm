@@ -275,6 +275,7 @@ type Msg
     = UserReceived (Result Decode.Error User)
     | IsAdminReceived Bool
     | LogInWithGoogleClicked
+    | LogOutClicked
     | SetAdmin Bool
     | DecodeError Decode.Error
     | TopicChangesReceived TopicChanges
@@ -338,6 +339,9 @@ update msg model =
 
         LogInWithGoogleClicked ->
             ( model, logInWithGoogle_ () )
+
+        LogOutClicked ->
+            ( model, Debug.todo "log out" )
 
         SetAdmin isAdmin ->
             ( { model | user = setAdminActiveForUser isAdmin model.user }, Cmd.none )
@@ -1000,9 +1004,42 @@ settingsView remoteUser =
                                     [ text "If you would like to become a moderator, ask someone who manages this app to add you to the list of moderators and tell them the email address you are logged in with."
                                     ]
                                 ]
+
+                        logOutButton =
+                            Html.button [ css [ buttonStyle ], onClick LogOutClicked ] [ text "Log out" ]
+
+                        spaceChildrenAndP style =
+                            Css.batch
+                                [ spaceChildren style
+                                , Global.children
+                                    [ Global.p
+                                        [ Css.marginBottom zero
+                                        ]
+                                    ]
+                                ]
                     in
-                    Html.p [] [ text ("Logged in via Google as " ++ user.email ++ ".") ]
-                        :: settings
+                    [ Html.div
+                        [ css
+                            [ Css.displayFlex
+                            , Css.flexDirection Css.column
+                            , Css.alignItems Css.start
+                            , spaceChildrenAndP (Css.marginTop (rem 2))
+                            ]
+                        ]
+                        (div
+                            [ css
+                                [ Css.displayFlex
+                                , Css.flexDirection Css.column
+                                , Css.alignItems Css.start
+                                , spaceChildrenAndP (Css.marginTop (rem 0.5))
+                                ]
+                            ]
+                            [ Html.p [] [ text ("Logged in via Google as " ++ user.email ++ ".") ]
+                            , logOutButton
+                            ]
+                            :: settings
+                        )
+                    ]
             )
         , Html.div [ css [ Css.marginTop (rem 2) ] ]
             [ Html.h2 [] [ Html.text "Privacy Policy" ]
