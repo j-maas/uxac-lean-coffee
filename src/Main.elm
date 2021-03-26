@@ -21,6 +21,7 @@ import Time
 import UUID
 
 
+main : Program Flags Model Msg
 main =
     Browser.element
         { view = view >> Html.toUnstyled
@@ -146,7 +147,7 @@ type Continuation
 
 
 type User
-    = AnonymousUser { id : UserId }
+    = AnonymousUser UserId
     | GoogleUser { id : UserId, email : String, isAdmin : Remote Bool, adminActive : Bool }
 
 
@@ -178,7 +179,7 @@ isAdminActiveForUser user =
 getUserId : User -> UserId
 getUserId user =
     case user of
-        AnonymousUser { id } ->
+        AnonymousUser id ->
             id
 
         GoogleUser { id } ->
@@ -498,7 +499,7 @@ update msg model =
 
         MoveToSuggestedClicked ->
             case model.inDiscussion of
-                Just inDiscussion ->
+                Just _ ->
                     ( model, removeTopicInDiscussion model.workspace )
 
                 Nothing ->
@@ -705,8 +706,8 @@ clearContinuationVotes workspace maybeVotes =
 
         Just votes ->
             deleteDocs
-                ([ continuationVoteActiveDocPath workspace ]
-                    ++ List.map
+                (continuationVoteActiveDocPath workspace
+                    :: List.map
                         (\vote ->
                             continuationVotePath workspace vote.userId
                         )
@@ -811,11 +812,11 @@ view model =
                 [ logo
                 , h1 [ css [ Css.margin zero ] ] [ text heading ]
                 ]
+             , settingsView model.user
              ]
-                ++ [ settingsView model.user ]
                 ++ errorView model.error
-                ++ [ discussionView model.user inDiscussion continuationVotes model model.timerInput ]
-                ++ discussedTopics model.user discussedList
+                ++ discussionView model.user inDiscussion continuationVotes model model.timerInput
+                :: discussedTopics model.user discussedList
                 ++ [ topicEntry model.user model.newTopicInput ]
             )
         , topicsToVote model.user topicList (sortBarView model.votes model.topics)
@@ -917,7 +918,7 @@ processTopics model =
                         |> Maybe.withDefault []
 
                 ( maybeInDiscussion, remainingTopics ) =
-                    Maybe.map (\topicId -> extract (\( id, entry ) -> id == topicId) topicsWithVotes)
+                    Maybe.map (\topicId -> extract (\( id, _ ) -> id == topicId) topicsWithVotes)
                         model.inDiscussion
                         |> Maybe.withDefault ( Nothing, topicsWithVotes )
 
@@ -973,8 +974,8 @@ settingsView remoteUser =
                 Loading ->
                     [ Html.p [] [ text "Connecting…" ] ]
 
-                Got (AnonymousUser user) ->
-                    [ Html.p [] [ text ("Logged in anonymously as " ++ user.id ++ ".") ]
+                Got (AnonymousUser id) ->
+                    [ Html.p [] [ text ("Logged in anonymously as " ++ id ++ ".") ]
                     , Html.button
                         [ css [ buttonStyle ]
                         , onClick LogInWithGoogleClicked
@@ -1000,9 +1001,8 @@ settingsView remoteUser =
                                     ]
                                 ]
                     in
-                    [ Html.p [] [ text ("Logged in via Google as " ++ user.email ++ ".") ]
-                    ]
-                        ++ settings
+                    Html.p [] [ text ("Logged in via Google as " ++ user.email ++ ".") ]
+                        :: settings
             )
         , Html.div [ css [ Css.marginTop (rem 2) ] ]
             [ Html.h2 [] [ Html.text "Privacy Policy" ]
@@ -1082,9 +1082,8 @@ discussionView creds maybeDiscussedTopic continuationVotes times timerInput =
             , listItemSpacing
             ]
         ]
-        ([ h2 [ css [ Css.margin zero ] ] [ text "In discussion" ]
-         ]
-            ++ (case maybeDiscussedTopic of
+        (h2 [ css [ Css.margin zero ] ] [ text "In discussion" ]
+            :: (case maybeDiscussedTopic of
                     Just topic ->
                         [ topicToDiscussCard creds topic
                         ]
@@ -1107,8 +1106,8 @@ discussionView creds maybeDiscussedTopic continuationVotes times timerInput =
                             ]
                         ]
                )
-            ++ [ remainingTime creds times timerInput ]
-            ++ continuationVote creds continuationVotes
+            ++ remainingTime creds times timerInput
+            :: continuationVote creds continuationVotes
         )
 
 
@@ -1461,12 +1460,12 @@ topicsToVote creds remoteTopics toolbar =
                             [ text "No topics suggested yet. Add a topic above." ]
 
                     _ ->
-                        topicsToVoteList creds topics toolbar
+                        topicsToVoteList creds topics
         ]
 
 
-topicsToVoteList : Remote User -> List TopicWithVotes -> Html Msg -> Html Msg
-topicsToVoteList creds topics toolbar =
+topicsToVoteList : Remote User -> List TopicWithVotes -> Html Msg
+topicsToVoteList creds topics =
     let
         breakpoint =
             rem 40
@@ -1602,9 +1601,6 @@ topicToDiscussCard remoteUser ( topicId, entry ) =
         voteCount =
             List.length entry.votes
 
-        mayMod =
-            mayModify remoteUser entry.topic.creator
-
         maybeDeleteButton =
             if isAdminActiveForUser remoteUser then
                 [ deleteButton topicId
@@ -1714,7 +1710,7 @@ topicToVoteCard remoteUser ( topicId, entry ) =
                             , Css.alignItems Css.start
                             ]
                         ]
-                        ([ text entry.topic.topic ] ++ maybeEditButton)
+                        (text entry.topic.topic :: maybeEditButton)
 
         maybeDeleteButton =
             if mayMod then
@@ -1781,8 +1777,8 @@ finishedTopicCard creds ( topicId, entry ) =
         { content = text entry.topic.topic
         , toolbar =
             [ toolbarRow
-                ([ votesIndicator voteCount ]
-                    ++ maybeDeleteButton
+                (votesIndicator voteCount
+                    :: maybeDeleteButton
                 )
             ]
         }
@@ -1984,7 +1980,7 @@ smallBorderRadius =
 card : List Css.Style -> List (Attribute Msg) -> List (Html Msg) -> Html Msg
 card styles attributes content =
     div
-        ([ css
+        (css
             ([ Css.padding (rem 1)
              , borderRadius
              , Css.boxShadow4 zero (rem 0.1) (rem 0.3) (Css.hsla 0 0 0 0.25)
@@ -1992,8 +1988,7 @@ card styles attributes content =
              ]
                 ++ styles
             )
-         ]
-            ++ attributes
+            :: attributes
         )
         content
 
@@ -2027,7 +2022,7 @@ primaryHue =
 
 
 subscriptions : Model -> Sub Msg
-subscriptions model =
+subscriptions _ =
     Sub.batch
         [ receiveFirestoreSubscriptions
         , receiveUser_ (Decode.decodeValue userDecoder >> UserReceived)
@@ -2152,26 +2147,6 @@ encodeSubscriptionKind kind =
                     "doc"
     in
     Encode.string raw
-
-
-subscriptionKindDecoder : Decoder SubscriptionKind
-subscriptionKindDecoder =
-    Decode.string
-        |> Decode.andThen
-            (\raw ->
-                case raw of
-                    "collection" ->
-                        Decode.succeed Collection
-
-                    "collectionChanges" ->
-                        Decode.succeed CollectionChanges
-
-                    "doc" ->
-                        Decode.succeed Doc
-
-                    _ ->
-                        Decode.fail "Invalid subscription kind"
-            )
 
 
 type alias Path =
@@ -2479,7 +2454,7 @@ userDecoder =
                 case provider of
                     "anonymous" ->
                         Decode.field "id" Decode.string
-                            |> Decode.map (\id -> AnonymousUser { id = id })
+                            |> Decode.map (\id -> AnonymousUser id)
 
                     "google.com" ->
                         Decode.map2

@@ -1,6 +1,6 @@
 module SortedDictTest exposing (..)
 
-import Expect exposing (Expectation)
+import Expect 
 import Fuzz
 import SortedDict exposing (SortedDict)
 import Test exposing (..)
@@ -20,7 +20,7 @@ suite =
         , fuzz (Fuzz.list Fuzz.int) "sorts items" <|
             \list ->
                 let
-                    ( withIds, sortedDict ) =
+                    ( _, sortedDict ) =
                         fromList list
                 in
                 sortedDict
