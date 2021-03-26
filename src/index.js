@@ -98,6 +98,12 @@ app.ports.logInWithGoogle_.subscribe(() => {
     .catch(sendErrorToElm);
 });
 
+app.ports.logOut_.subscribe(() => {
+  console.log("Logging out user.");
+  firebase.auth().signOut()
+    .catch(sendErrorToElm);
+});
+
 firebase.auth()
   .getRedirectResult()
   .catch(sendErrorToElm);
