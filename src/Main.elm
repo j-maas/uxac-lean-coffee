@@ -341,7 +341,7 @@ update msg model =
             ( model, logInWithGoogle_ () )
 
         LogOutClicked ->
-            ( model, Debug.todo "log out" )
+            ( model, logOut_ () )
 
         SetAdmin isAdmin ->
             ( { model | user = setAdminActiveForUser isAdmin model.user }, Cmd.none )
@@ -2419,6 +2419,9 @@ port selectTextarea_ : String -> Cmd msg
 
 
 port logInWithGoogle_ : () -> Cmd msg
+
+
+port logOut_ : () -> Cmd msg
 
 
 
