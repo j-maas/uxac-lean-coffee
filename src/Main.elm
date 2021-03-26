@@ -50,7 +50,7 @@ type alias Model =
     , newTopicInput : String
     , user : Remote User
     , error : Maybe Error
-    , workspace : Maybe String
+    , workspace : Workspace
     , uuidSeeds : UUID.Seeds
 
     {- This allows us to specify that a server should add a timestamp
@@ -78,6 +78,10 @@ type alias Topic =
 
 type alias VoteCountMap =
     TopicId -> Int
+
+
+type alias Workspace =
+    String
 
 
 sortTopicList : VoteCountMap -> TopicList -> TopicList
@@ -224,19 +228,11 @@ init flags =
 
         workspace =
             if String.startsWith workspaceQueryPrefix flags.workspaceQuery then
-                let
-                    sanitizedWorkspace =
-                        String.dropLeft (String.length workspaceQueryPrefix) flags.workspaceQuery
-                            |> String.trim
-                in
-                if String.isEmpty sanitizedWorkspace then
-                    Nothing
-
-                else
-                    Just sanitizedWorkspace
+                String.dropLeft (String.length workspaceQueryPrefix) flags.workspaceQuery
+                    |> String.trim
 
             else
-                Nothing
+                ""
 
         uuidSeeds =
             { seed1 = Random.initialSeed flags.uuidSeeds.seed1
@@ -619,7 +615,7 @@ updateTopicList voteCountMap changes remoteTopics =
         |> Got
 
 
-submitTopic : Maybe String -> TopicId -> NewTopicSubmission -> Cmd msg
+submitTopic : Workspace -> TopicId -> NewTopicSubmission -> Cmd msg
 submitTopic workspace id newTopic =
     setDoc
         { docPath = topicCollectionPath workspace ++ [ id ]
@@ -629,7 +625,7 @@ submitTopic workspace id newTopic =
         }
 
 
-setTopic : Maybe String -> TopicId -> Topic -> Cmd msg
+setTopic : Workspace -> TopicId -> Topic -> Cmd msg
 setTopic workspace topicId newTopic =
     let
         topicPath =
@@ -641,7 +637,7 @@ setTopic workspace topicId newTopic =
         }
 
 
-deleteTopic : Maybe String -> TopicId -> Remote Votes -> Cmd msg
+deleteTopic : Workspace -> TopicId -> Remote Votes -> Cmd msg
 deleteTopic workspace topicId votes =
     let
         topicPath =
@@ -660,7 +656,7 @@ deleteTopic workspace topicId votes =
     deleteDocs (topicPath :: votePaths)
 
 
-submitVote : Maybe String -> Vote -> Cmd msg
+submitVote : Workspace -> Vote -> Cmd msg
 submitVote workspace vote =
     setDoc
         { docPath = topicVotePath workspace vote
@@ -669,17 +665,17 @@ submitVote workspace vote =
         }
 
 
-topicVotePath : Maybe String -> Vote -> Path
+topicVotePath : Workspace -> Vote -> Path
 topicVotePath workspace ids =
     voteCollectionPath workspace ++ [ ids.userId ++ ":" ++ ids.topicId ]
 
 
-retractVote : Maybe String -> Vote -> Cmd msg
+retractVote : Workspace -> Vote -> Cmd msg
 retractVote workspace vote =
     deleteDocs [ topicVotePath workspace vote ]
 
 
-startContinuationVote : Maybe String -> Cmd msg
+startContinuationVote : Workspace -> Cmd msg
 startContinuationVote workspace =
     setDoc
         { docPath = continuationVoteActiveDocPath workspace
@@ -687,7 +683,7 @@ startContinuationVote workspace =
         }
 
 
-submitContinuationVote : Maybe String -> ContinuationVote -> Cmd msg
+submitContinuationVote : Workspace -> ContinuationVote -> Cmd msg
 submitContinuationVote workspace vote =
     setDoc
         { docPath = continuationVotePath workspace vote.userId
@@ -695,14 +691,14 @@ submitContinuationVote workspace vote =
         }
 
 
-retractContinuationVote : Maybe String -> UserId -> Cmd msg
+retractContinuationVote : Workspace -> UserId -> Cmd msg
 retractContinuationVote workspace userId =
     deleteDocs
         [ continuationVotePath workspace userId
         ]
 
 
-clearContinuationVotes : Maybe String -> Maybe (List ContinuationVote) -> Cmd msg
+clearContinuationVotes : Workspace -> Maybe (List ContinuationVote) -> Cmd msg
 clearContinuationVotes workspace maybeVotes =
     case maybeVotes of
         Nothing ->
@@ -719,12 +715,12 @@ clearContinuationVotes workspace maybeVotes =
                 )
 
 
-continuationVotePath : Maybe String -> UserId -> Path
+continuationVotePath : Workspace -> UserId -> Path
 continuationVotePath workspace userId =
     continuationVoteCollectionPath workspace ++ [ userId ]
 
 
-submitTopicInDiscussion : Maybe String -> TopicId -> Cmd msg
+submitTopicInDiscussion : Workspace -> TopicId -> Cmd msg
 submitTopicInDiscussion workspace topicId =
     setDoc
         { docPath = inDiscussionDocPath workspace
@@ -732,7 +728,7 @@ submitTopicInDiscussion workspace topicId =
         }
 
 
-finishDiscussion : Maybe String -> TopicId -> TimestampField -> Cmd msg
+finishDiscussion : Workspace -> TopicId -> TimestampField -> Cmd msg
 finishDiscussion workspace topicId timestamp =
     Cmd.batch
         [ deleteDocs [ inDiscussionDocPath workspace ]
@@ -743,12 +739,12 @@ finishDiscussion workspace topicId timestamp =
         ]
 
 
-removeTopicInDiscussion : Maybe String -> Cmd msg
+removeTopicInDiscussion : Workspace -> Cmd msg
 removeTopicInDiscussion workspace =
     deleteDocs [ inDiscussionDocPath workspace ]
 
 
-submitDeadline : Maybe String -> Time.Posix -> Cmd msg
+submitDeadline : Workspace -> Time.Posix -> Cmd msg
 submitDeadline workspace deadline =
     setDoc
         { docPath = discussionDeadlineDocPath workspace
@@ -756,7 +752,7 @@ submitDeadline workspace deadline =
         }
 
 
-clearDeadline : Maybe String -> Cmd msg
+clearDeadline : Workspace -> Cmd msg
 clearDeadline workspace =
     deleteDocs
         [ discussionDeadlineDocPath workspace
@@ -2073,59 +2069,58 @@ subscriptions _ =
 --- PORTS
 
 
-topicCollectionPath : Maybe String -> Path
+topicCollectionPath : Workspace -> Path
 topicCollectionPath workspace =
     [ "topics" ]
         |> prependWorkspace workspace
 
 
-voteCollectionPath : Maybe String -> Path
+voteCollectionPath : Workspace -> Path
 voteCollectionPath workspace =
     [ "votes" ]
         |> prependWorkspace workspace
 
 
-inDiscussionDocPath : Maybe String -> Path
+inDiscussionDocPath : Workspace -> Path
 inDiscussionDocPath workspace =
     [ "discussion", "topic" ]
         |> prependWorkspace workspace
 
 
-discussionDeadlineDocPath : Maybe String -> Path
+discussionDeadlineDocPath : Workspace -> Path
 discussionDeadlineDocPath workspace =
     [ "discussion", "deadline" ]
         |> prependWorkspace workspace
 
 
-continuationVoteActiveDocPath : Maybe String -> Path
+continuationVoteActiveDocPath : Workspace -> Path
 continuationVoteActiveDocPath workspace =
     [ "discussion", "continuationVote" ]
         |> prependWorkspace workspace
 
 
-continuationVoteCollectionPath : Maybe String -> Path
+continuationVoteCollectionPath : Workspace -> Path
 continuationVoteCollectionPath workspace =
     [ "continuationVotes" ]
         |> prependWorkspace workspace
 
 
-discussedCollectionPath : Maybe String -> Path
+discussedCollectionPath : Workspace -> Path
 discussedCollectionPath workspace =
     [ "discussed" ]
         |> prependWorkspace workspace
 
 
-prependWorkspace : Maybe String -> Path -> Path
-prependWorkspace maybeWorkspace path =
-    case maybeWorkspace of
-        Nothing ->
-            path
+prependWorkspace : Workspace -> Path -> Path
+prependWorkspace workspace path =
+    let
+        serializedWorkspace =
+            "_" ++ workspace
+    in
+    [ "workspaces", serializedWorkspace ] ++ path
 
-        Just workspace ->
-            [ "workspaces", workspace ] ++ path
 
-
-firestoreSubscriptionsCmd : Maybe String -> Cmd Msg
+firestoreSubscriptionsCmd : Workspace -> Cmd Msg
 firestoreSubscriptionsCmd workspace =
     Cmd.batch
         [ subscribe { kind = CollectionChanges, path = topicCollectionPath workspace, tag = TopicChangesTag }
