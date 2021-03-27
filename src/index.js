@@ -3,7 +3,6 @@ import "firebase/firebase-firestore";
 import "firebase/firebase-auth";
 
 import { Elm } from "./Main.elm";
-import registerServiceWorker from "./registerServiceWorker";
 
 // Just checking envs are defined - Debug statement
 // console.log(process.env.ELM_APP_API_KEY !== undefined);
@@ -231,5 +230,3 @@ function sendErrorToElm(error) {
     message: error.message
   });
 }
-
-registerServiceWorker();
