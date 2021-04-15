@@ -670,14 +670,6 @@ setTopic workspace topicId newTopic =
         }
 
 
-setUserName : UserId -> String -> Cmd msg
-setUserName userId userName =
-    setDoc
-        { docPath = usersCollectionPath ++ [ userId ]
-        , doc = Encode.object [ ( "name", Encode.string userName ) ]
-        }
-
-
 deleteTopic : Workspace -> TopicId -> Remote Votes -> Cmd msg
 deleteTopic workspace topicId votes =
     let
@@ -2311,11 +2303,6 @@ discussedCollectionPath workspace =
         |> prependWorkspace workspace
 
 
-usersCollectionPath : Path
-usersCollectionPath =
-    [ "users" ]
-
-
 prependWorkspace : Workspace -> Path -> Path
 prependWorkspace workspace path =
     let
@@ -2385,16 +2372,6 @@ encodeSubscriptionKind kind =
                     "doc"
     in
     Encode.string raw
-
-
-type alias Path =
-    List String
-
-
-encodePath : Path -> Encode.Value
-encodePath path =
-    String.join "/" path
-        |> Encode.string
 
 
 type SubscriptionTag
@@ -2589,22 +2566,6 @@ insertDoc info =
 
 
 port insertDoc_ : Encode.Value -> Cmd msg
-
-
-type alias SetDocInfo =
-    { docPath : Path, doc : Encode.Value }
-
-
-setDoc : SetDocInfo -> Cmd msg
-setDoc info =
-    Encode.object
-        [ ( "path", encodePath info.docPath )
-        , ( "doc", info.doc )
-        ]
-        |> setDoc_
-
-
-port setDoc_ : Encode.Value -> Cmd msg
 
 
 deleteDocs : List Path -> Cmd msg
