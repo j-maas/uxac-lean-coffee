@@ -9,6 +9,7 @@ import Remote exposing (Remote(..))
 type Store
     = Store
         { userNames : Remote UserNames
+        , speakers : Speakers
         }
 
 
@@ -42,6 +43,7 @@ setUserName userId userName =
         , doc = Encode.object [ ( "name", Encode.string userName ) ]
         }
 
+
 userNamesDecoder : Decoder (List UserNameEntry)
 userNamesDecoder =
     Decode.list
@@ -57,6 +59,24 @@ userNamesDecoder =
 
 
 
+-- Speakers
+
+
+type alias Speakers =
+    List UserId
+
+
+getSpeakers : Store -> Speakers
+getSpeakers (Store store) =
+    store.speakers
+
+
+enqueue : UserId -> Store -> Store
+enqueue userId (Store store) =
+    Store { store | speakers = store.speakers ++ [ userId ] }
+
+
+
 -- Functions
 
 
@@ -64,6 +84,7 @@ init : Store
 init =
     Store
         { userNames = Loading
+        , speakers = [ "Johannes", "Roksy", "Jonathan" ]
         }
 
 
@@ -80,7 +101,6 @@ update msg (Store store) =
                     Dict.fromList userList
             in
             Store { store | userNames = Got users }
-
 
 
 dataField : String -> Decoder a -> Decoder a

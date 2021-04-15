@@ -305,6 +305,7 @@ type Msg
     | ChangeUserNameClicked
     | UserNameChanged String
     | SaveUserNameClicked
+    | EnqueueClicked
     | Tick Time.Posix
     | TimerInputChanged String
     | TimerStarted
@@ -560,6 +561,14 @@ update msg model =
                     ( { model | userNameInput = Nothing }, setUserName (getUserId user) userName )
 
                 _ ->
+                    ( model, Cmd.none )
+
+        EnqueueClicked ->
+            case model.user of
+                Got user ->
+                    ( { model | store = Store.enqueue (getUserId user) model.store }, Cmd.none )
+
+                Loading ->
                     ( model, Cmd.none )
 
         Tick now ->
@@ -848,7 +857,12 @@ view model =
              , settingsContainerView model.user model.userNameInput (getUserNames model.store)
              ]
                 ++ errorView model.error
-                ++ discussionView model.user inDiscussion continuationVotes model model.timerInput
+                ++ discussionView model.user
+                    inDiscussion
+                    continuationVotes
+                    model
+                    model.timerInput
+                    (Store.getSpeakers model.store)
                 :: discussedTopics model.user discussedList
                 ++ [ topicEntry model.user model.newTopicInput ]
             )
@@ -1297,8 +1311,9 @@ discussionView :
     -> Maybe (List ContinuationVote)
     -> { b | now : Maybe Time.Posix, deadline : Maybe Time.Posix }
     -> String
+    -> Speakers
     -> Html Msg
-discussionView creds maybeDiscussedTopic continuationVotes times timerInput =
+discussionView creds maybeDiscussedTopic continuationVotes times timerInput speakers =
     div
         [ css
             [ borderRadius
@@ -1333,7 +1348,7 @@ discussionView creds maybeDiscussedTopic continuationVotes times timerInput =
                )
             ++ remainingTime creds times timerInput
             :: continuationVote creds continuationVotes
-            ++ [ speakerListView ]
+            ++ [ speakerListView speakers ]
         )
 
 
@@ -1615,12 +1630,8 @@ continuationVoteButtons user continuationVotes =
         [ stayButton, abstainButton, moveOnButton ]
 
 
-speakerListView : Html Msg
-speakerListView =
-    let
-        speakers =
-            [ "Johannes", "Roksy", "Jonathan" ]
-    in
+speakerListView : Speakers -> Html Msg
+speakerListView speakers =
     Html.div []
         [ Html.ol []
             (List.map
@@ -1629,7 +1640,11 @@ speakerListView =
                 )
                 speakers
             )
-        , Html.button [ css [ buttonStyle ] ] [ text "Enqueue" ]
+        , Html.button
+            [ css [ buttonStyle ]
+            , onClick EnqueueClicked
+            ]
+            [ text "Enqueue" ]
         ]
 
 
