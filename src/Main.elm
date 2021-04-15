@@ -17,6 +17,7 @@ import Random
 import Remote exposing (Remote(..))
 import Set exposing (Set)
 import SortedDict exposing (SortedDict)
+import Store exposing (..)
 import Time
 import UUID
 
@@ -48,7 +49,8 @@ type alias Model =
     , now : Maybe Time.Posix
     , timerInput : String
     , newTopicInput : String
-    , user : Remote User
+    , user : Remote Login
+    , store : Store
     , error : Maybe Error
     , workspace : Workspace
     , uuidSeeds : UUID.Seeds
@@ -133,7 +135,7 @@ type alias Vote =
     { userId : UserId, topicId : TopicId }
 
 
-voteFrom : User -> TopicId -> Vote
+voteFrom : Login -> TopicId -> Vote
 voteFrom user topicId =
     { userId = getUserId user, topicId = topicId }
 
@@ -150,12 +152,12 @@ type Continuation
     | Abstain
 
 
-type User
+type Login
     = AnonymousUser UserId
     | GoogleUser { id : UserId, email : String, isAdmin : Remote Bool, adminActive : Bool }
 
 
-setAdminActiveForUser : Bool -> Remote User -> Remote User
+setAdminActiveForUser : Bool -> Remote Login -> Remote Login
 setAdminActiveForUser adminActive remoteUser =
     case remoteUser of
         Got (GoogleUser user) ->
@@ -165,7 +167,7 @@ setAdminActiveForUser adminActive remoteUser =
             user
 
 
-isAdminActiveForUser : Remote User -> Bool
+isAdminActiveForUser : Remote Login -> Bool
 isAdminActiveForUser user =
     case user of
         Got (GoogleUser googleUser) ->
@@ -180,7 +182,7 @@ isAdminActiveForUser user =
             False
 
 
-getUserId : User -> UserId
+getUserId : Login -> UserId
 getUserId user =
     case user of
         AnonymousUser id ->
@@ -188,10 +190,6 @@ getUserId user =
 
         GoogleUser { id } ->
             id
-
-
-type alias UserId =
-    String
 
 
 type alias Error =
@@ -254,6 +252,7 @@ init flags =
       , timerInput = "10"
       , newTopicInput = ""
       , user = Loading
+      , store = Store.init
       , error = Nothing
       , workspace = workspace
       , uuidSeeds = uuidSeeds
@@ -268,7 +267,7 @@ init flags =
 
 
 type Msg
-    = UserReceived (Result Decode.Error User)
+    = UserReceived (Result Decode.Error Login)
     | IsAdminReceived Bool
     | LogInWithGoogleClicked
     | LogOutClicked
@@ -281,8 +280,9 @@ type Msg
     | ContinuationVotesReceived (List ContinuationVote)
     | DiscussedTopicsReceived (List ( TopicId, Maybe Time.Posix ))
     | DeadlineReceived (Maybe Time.Posix)
+    | StoreMsg Store.Msg
     | Read TopicId
-    | SaveTopic User
+    | SaveTopic Login
     | EditTopicClicked TopicId
     | TopicEdited TopicId String
     | SaveTopicClicked TopicId
@@ -291,8 +291,8 @@ type Msg
     | MoveToDiscussedClicked
     | MoveToSuggestedClicked
     | SortTopics
-    | Upvote User TopicId
-    | RemoveUpvote User TopicId
+    | Upvote Login TopicId
+    | RemoveUpvote Login TopicId
     | StartContinuationVote
     | ClearContinuationVote
     | ContinuationVoteSent ContinuationVote
@@ -382,6 +382,9 @@ update msg model =
 
         DeadlineReceived deadline ->
             ( { model | deadline = deadline }, Cmd.none )
+
+        StoreMsg storeMsg ->
+            ( { model | store = Store.update storeMsg model.store }, Cmd.none )
 
         ErrorReceived result ->
             case result of
@@ -965,7 +968,7 @@ extract predicate list =
         |> Tuple.mapFirst List.head
 
 
-settingsView : Remote User -> Html Msg
+settingsView : Remote Login -> Html Msg
 settingsView remoteUser =
     Html.details [ css [ detailsStyle ] ]
         [ Html.summary [] [ text "Settings & Privacy Policy" ]
@@ -1100,7 +1103,7 @@ errorView maybeError =
 
 
 discussionView :
-    Remote User
+    Remote Login
     -> Maybe TopicWithVotes
     -> Maybe (List ContinuationVote)
     -> { b | now : Maybe Time.Posix, deadline : Maybe Time.Posix }
@@ -1145,7 +1148,7 @@ discussionView creds maybeDiscussedTopic continuationVotes times timerInput =
 
 
 remainingTime :
-    Remote User
+    Remote Login
     -> { b | now : Maybe Time.Posix, deadline : Maybe Time.Posix }
     -> String
     -> Html Msg
@@ -1288,7 +1291,7 @@ backgroundColor =
     Css.backgroundColor (Css.hsl primaryHue 0.2 0.95)
 
 
-discussedTopics : Remote User -> List TopicWithVotes -> List (Html Msg)
+discussedTopics : Remote Login -> List TopicWithVotes -> List (Html Msg)
 discussedTopics model topics =
     case List.length topics of
         0 ->
@@ -1337,7 +1340,7 @@ detailsStyle =
         ]
 
 
-continuationVote : Remote User -> Maybe (List ContinuationVote) -> List (Html Msg)
+continuationVote : Remote Login -> Maybe (List ContinuationVote) -> List (Html Msg)
 continuationVote remoteUser maybeContinuationVotes =
     case remoteUser of
         Loading ->
@@ -1379,7 +1382,7 @@ continuationVote remoteUser maybeContinuationVotes =
             maybeAdminButtons ++ maybeVoteButtons
 
 
-continuationVoteButtons : User -> List ContinuationVote -> Html Msg
+continuationVoteButtons : Login -> List ContinuationVote -> Html Msg
 continuationVoteButtons user continuationVotes =
     let
         ( moveOnVotes, remainingVotes ) =
@@ -1422,7 +1425,7 @@ continuationVoteButtons user continuationVotes =
         [ stayButton, abstainButton, moveOnButton ]
 
 
-topicEntry : Remote User -> String -> Html Msg
+topicEntry : Remote Login -> String -> Html Msg
 topicEntry user newTopicInput =
     div
         [ css
@@ -1434,7 +1437,7 @@ topicEntry user newTopicInput =
         [ submitForm user newTopicInput ]
 
 
-topicsToVote : Remote User -> Remote (List TopicWithVotes) -> Html Msg -> Html Msg
+topicsToVote : Remote Login -> Remote (List TopicWithVotes) -> Html Msg -> Html Msg
 topicsToVote creds remoteTopics toolbar =
     div
         [ css
@@ -1497,7 +1500,7 @@ topicsToVote creds remoteTopics toolbar =
         ]
 
 
-topicsToVoteList : Remote User -> List TopicWithVotes -> Html Msg
+topicsToVoteList : Remote Login -> List TopicWithVotes -> Html Msg
 topicsToVoteList creds topics =
     let
         breakpoint =
@@ -1628,7 +1631,7 @@ sortButton =
     button [ css [ buttonStyle ], onClick SortTopics ] [ text "Sort" ]
 
 
-topicToDiscussCard : Remote User -> TopicWithVotes -> Html Msg
+topicToDiscussCard : Remote Login -> TopicWithVotes -> Html Msg
 topicToDiscussCard remoteUser ( topicId, entry ) =
     let
         voteCount =
@@ -1687,7 +1690,7 @@ topicToDiscussCard remoteUser ( topicId, entry ) =
         }
 
 
-topicToVoteCard : Remote User -> TopicWithVotes -> Html Msg
+topicToVoteCard : Remote Login -> TopicWithVotes -> Html Msg
 topicToVoteCard remoteUser ( topicId, entry ) =
     let
         maybeDiscussButton =
@@ -1788,7 +1791,7 @@ topicToVoteCard remoteUser ( topicId, entry ) =
         }
 
 
-finishedTopicCard : Remote User -> TopicWithVotes -> Html Msg
+finishedTopicCard : Remote Login -> TopicWithVotes -> Html Msg
 finishedTopicCard creds ( topicId, entry ) =
     let
         voteCount =
@@ -1817,7 +1820,7 @@ finishedTopicCard creds ( topicId, entry ) =
         }
 
 
-maybeTopicVoteButton : Remote User -> TopicWithVotes -> List (Html Msg)
+maybeTopicVoteButton : Remote Login -> TopicWithVotes -> List (Html Msg)
 maybeTopicVoteButton remoteUser ( topicId, entry ) =
     case remoteUser of
         Loading ->
@@ -1838,7 +1841,7 @@ maybeTopicVoteButton remoteUser ( topicId, entry ) =
             ]
 
 
-voteButton : User -> List UserId -> { upvote : Msg, downvote : Msg } -> (Int -> Html Msg) -> Html Msg
+voteButton : Login -> List UserId -> { upvote : Msg, downvote : Msg } -> (Int -> Html Msg) -> Html Msg
 voteButton user votes msgs content =
     let
         voteCount =
@@ -1914,7 +1917,7 @@ deleteButton topicId =
         [ text "Delete" ]
 
 
-mayModify : Remote User -> UserId -> Bool
+mayModify : Remote Login -> UserId -> Bool
 mayModify remoteUser creator =
     if isAdminActiveForUser remoteUser then
         True
@@ -1963,7 +1966,7 @@ toolbarRow content =
         content
 
 
-submitForm : Remote User -> String -> Html Msg
+submitForm : Remote Login -> String -> Html Msg
 submitForm fetchedUser currentInput =
     case fetchedUser of
         Loading ->
@@ -1973,7 +1976,7 @@ submitForm fetchedUser currentInput =
             newTopicForm user currentInput
 
 
-newTopicForm : User -> String -> Html Msg
+newTopicForm : Login -> String -> Html Msg
 newTopicForm user currentInput =
     form
         [ css [ Css.displayFlex, Css.flexDirection Css.column, Css.alignItems Css.flexStart ]
@@ -2111,6 +2114,11 @@ discussedCollectionPath workspace =
         |> prependWorkspace workspace
 
 
+usersCollectionPath : Path
+usersCollectionPath =
+    [ "users" ]
+
+
 prependWorkspace : Workspace -> Path -> Path
 prependWorkspace workspace path =
     let
@@ -2130,6 +2138,7 @@ firestoreSubscriptionsCmd workspace =
         , subscribe { kind = Collection, path = continuationVoteCollectionPath workspace, tag = ContinuationVotesTag }
         , subscribe { kind = Collection, path = discussedCollectionPath workspace, tag = DiscussedTag }
         , subscribe { kind = Doc, path = discussionDeadlineDocPath workspace, tag = DeadlineTag }
+        , subscribe { kind = Collection, path = usersCollectionPath, tag = UsersTag }
         ]
 
 
@@ -2199,6 +2208,7 @@ type SubscriptionTag
     | ContinuationVotesTag
     | DiscussedTag
     | DeadlineTag
+    | UsersTag
 
 
 encodeSubscriptionTag : SubscriptionTag -> Encode.Value
@@ -2226,6 +2236,9 @@ encodeSubscriptionTag tag =
 
                 DeadlineTag ->
                     "deadline"
+
+                UsersTag ->
+                    "users"
     in
     Encode.string raw
 
@@ -2256,6 +2269,9 @@ subscriptionTagDecoder =
 
                     "deadline" ->
                         Decode.succeed DeadlineTag
+
+                    "users" ->
+                        Decode.succeed UsersTag
 
                     _ ->
                         Decode.fail "Invalid subscription kind"
@@ -2309,6 +2325,10 @@ parseFirestoreSubscription value =
                                         DeadlineTag ->
                                             deadlineDecoder
                                                 |> Decode.map DeadlineReceived
+
+                                        UsersTag ->
+                                            usersDecoder
+                                                |> Decode.map (\users -> StoreMsg <| UsersReceived users)
                             in
                             Decode.field "data" dataDecoder
                         )
@@ -2476,12 +2496,7 @@ topicDecoder =
         (dataField "createdAt" (Decode.nullable timestampDecoder))
 
 
-dataField : String -> Decoder a -> Decoder a
-dataField field decoder =
-    Decode.field "data" (Decode.field field decoder)
-
-
-userDecoder : Decoder User
+userDecoder : Decoder Login
 userDecoder =
     Decode.field "provider" Decode.string
         |> Decode.andThen
