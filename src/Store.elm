@@ -10,7 +10,7 @@ import Time
 type Store
     = Store
         { userNames : Remote UserNames
-        , speakers : Speakers
+        , speakers : Remote Speakers
         }
 
 
@@ -62,7 +62,7 @@ type alias Speakers =
     List UserId
 
 
-getSpeakers : Store -> Speakers
+getSpeakers : Store -> Remote Speakers
 getSpeakers (Store store) =
     store.speakers
 
@@ -117,7 +117,7 @@ init : Store
 init =
     Store
         { userNames = Loading
-        , speakers = []
+        , speakers = Loading
         }
 
 
@@ -133,7 +133,7 @@ update msg (Store store) =
             Store { store | userNames = Got users }
 
         SpeakersReceived speakers ->
-            Store { store | speakers = speakers }
+            Store { store | speakers = Got speakers }
 
 
 dataField : String -> Decoder a -> Decoder a

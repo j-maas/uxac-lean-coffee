@@ -854,6 +854,7 @@ view model =
                     continuationVotes
                     model
                     model.timerInput
+                    (Store.getUserNames model.store)
                     (Store.getSpeakers model.store)
                 :: discussedTopics model.user discussedList
                 ++ [ topicEntry model.user model.newTopicInput ]
@@ -1303,9 +1304,10 @@ discussionView :
     -> Maybe (List ContinuationVote)
     -> { b | now : Maybe Time.Posix, deadline : Maybe Time.Posix }
     -> String
-    -> Speakers
+    -> Remote UserNames
+    -> Remote Speakers
     -> Html Msg
-discussionView creds maybeDiscussedTopic continuationVotes times timerInput speakers =
+discussionView creds maybeDiscussedTopic continuationVotes times timerInput remoteUserNames remoteSpeakers =
     div
         [ css
             [ borderRadius
@@ -1340,7 +1342,7 @@ discussionView creds maybeDiscussedTopic continuationVotes times timerInput spea
                )
             ++ remainingTime creds times timerInput
             :: continuationVote creds continuationVotes
-            ++ [ speakerListView speakers ]
+            ++ [ speakerListView remoteUserNames remoteSpeakers ]
         )
 
 
@@ -1622,22 +1624,32 @@ continuationVoteButtons user continuationVotes =
         [ stayButton, abstainButton, moveOnButton ]
 
 
-speakerListView : Speakers -> Html Msg
-speakerListView speakers =
+speakerListView : Remote UserNames -> Remote Speakers -> Html Msg
+speakerListView remoteUserNames remoteSpeakers =
     Html.div []
-        [ Html.ol []
-            (List.map
-                (\speakerName ->
-                    Html.li [] [ text speakerName ]
-                )
-                speakers
-            )
-        , Html.button
-            [ css [ buttonStyle ]
-            , onClick EnqueueClicked
-            ]
-            [ text "Enqueue" ]
-        ]
+        (case ( remoteUserNames, remoteSpeakers ) of
+            ( Got userNames, Got speakers ) ->
+                [ Html.ol []
+                    (List.filterMap
+                        (\speakerId ->
+                            Dict.get speakerId userNames
+                                |> Maybe.map
+                                    (\speakerName ->
+                                        Html.li [] [ text speakerName ]
+                                    )
+                        )
+                        speakers
+                    )
+                , Html.button
+                    [ css [ buttonStyle ]
+                    , onClick EnqueueClicked
+                    ]
+                    [ text "Enqueue" ]
+                ]
+
+            _ ->
+                [ text "Loading speaker list" ]
+        )
 
 
 topicEntry : Remote Login -> String -> Html Msg
