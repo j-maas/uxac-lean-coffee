@@ -7,7 +7,7 @@ import Css.Animations as Animations
 import Css.Global as Global
 import Css.Media as Media
 import Dict exposing (Dict)
-import Html.Styled as Html exposing (Attribute, Html, button, div, h1, h2, img, input, label, li, ol, span, text, textarea)
+import Html.Styled as Html exposing (Attribute, Html, button, div, h1, h2, img, li, ol, span, text, textarea)
 import Html.Styled.Attributes as Attributes exposing (css, src, type_, value)
 import Html.Styled.Events exposing (on, onClick, onInput, onMouseEnter, onSubmit)
 import Json.Decode as Decode exposing (Decoder)
@@ -302,6 +302,7 @@ type Msg
     | ErrorReceived (Result Decode.Error FirestoreErrorInfo)
     | DismissError
     | NewTopicInputChanged String
+    | ChangeUserNameClicked
     | UserNameChanged String
     | SaveUserNameClicked
     | Tick Time.Posix
@@ -536,13 +537,28 @@ update msg model =
         NewTopicInputChanged value ->
             ( { model | newTopicInput = value }, Cmd.none )
 
+        ChangeUserNameClicked ->
+            let
+                userName =
+                    (case ( model.user, getUsers model.store ) of
+                        ( Got user, Got users ) ->
+                            Dict.get (getUserId user) users
+                                |> Maybe.map .name
+
+                        _ ->
+                            Nothing
+                    )
+                        |> Maybe.withDefault ""
+            in
+            ( { model | userNameInput = Just userName }, Cmd.none )
+
         UserNameChanged newUserName ->
             ( { model | userNameInput = Just newUserName }, Cmd.none )
 
         SaveUserNameClicked ->
             case ( model.user, model.userNameInput ) of
                 ( Got user, Just userName ) ->
-                    ( model, setUserName (getUserId user) userName )
+                    ( { model | userNameInput = Nothing }, setUserName (getUserId user) userName )
 
                 _ ->
                     ( model, Cmd.none )
@@ -795,7 +811,7 @@ view model =
         isAdmin =
             isAdminActiveForUser model.user
 
-        heading =
+        headingText =
             "UXAC Lean Coffee"
                 ++ (if isAdmin then
                         " (Admin)"
@@ -836,9 +852,9 @@ view model =
                     ]
                 ]
                 [ logo
-                , h1 [ css [ Css.margin zero ] ] [ text heading ]
+                , h1 [ css [ Css.margin zero ] ] [ text headingText ]
                 ]
-             , settingsView model.user model.userNameInput (getUsers model.store)
+             , settingsContainerView model.user model.userNameInput (getUsers model.store)
              ]
                 ++ errorView model.error
                 ++ discussionView model.user inDiscussion continuationVotes model model.timerInput
@@ -991,116 +1007,247 @@ extract predicate list =
         |> Tuple.mapFirst List.head
 
 
-settingsView : Remote Login -> Maybe String -> Remote Users -> Html Msg
-settingsView remoteUser userNameInput users =
+settingsContainerView : Remote Login -> Maybe String -> Remote Users -> Html Msg
+settingsContainerView remoteUser maybeUserNameInput users =
     Html.details [ css [ detailsStyle ] ]
         [ Html.summary [] [ text "Settings & Privacy Policy" ]
-        , Html.div [ css [ Css.marginTop (rem 1) ] ]
-            (case remoteUser of
-                Loading ->
-                    [ Html.p [] [ text "Connecting…" ] ]
+        , settingsView [ Css.marginTop (rem 1) ] { user = remoteUser, userNameInput = maybeUserNameInput } users
+        , Html.div [ css [ Css.marginTop (rem 2) ] ]
+            privacyPolicyView
+        ]
 
-                Got (AnonymousUser id) ->
-                    let
-                        userName =
-                            Remote.toMaybe users
-                                |> Maybe.andThen (Dict.get id)
-                                |> Maybe.map .name
-                                |> Maybe.withDefault id
 
-                        userNameInputToDisplay =
-                            userNameInput
-                                |> Maybe.withDefault userName
-                    in
-                    [ Html.p [] [ text ("Logged in anonymously as " ++ id ++ ".") ]
-                    , Html.form
-                        [ css [ Css.displayFlex, Css.flexDirection Css.column, Css.alignItems Css.flexStart ]
-                        , onSubmit SaveUserNameClicked
-                        ]
-                        [ label [ css [ Css.displayFlex, Css.flexDirection Css.column, Css.width (pct 100) ] ]
-                            [ text "Add a topic"
-                            , input
-                                [ value userNameInputToDisplay
-                                , onInput UserNameChanged
-                                , css
-                                    [ inputStyle
-                                    , Css.marginTop (rem 0.3)
-                                    ]
-                                ]
-                                []
-                            ]
-                        , input [ type_ "submit", value "Save", css [ buttonStyle, Css.marginTop (rem 1) ] ] []
-                        ]
-                    , Html.button
-                        [ css [ buttonStyle ]
-                        , onClick LogInWithGoogleClicked
-                        ]
-                        [ text "Log in via Google" ]
+settingsView : List Css.Style -> { a | user : Remote Login, userNameInput : Maybe String } -> Remote Users -> Html Msg
+settingsView styles model remoteUsers =
+    let
+        section contents =
+            div
+                [ css
+                    [ Css.displayFlex
+                    , Css.flexDirection Css.column
+                    , Css.alignItems Css.start
+                    , spaceChildrenAndP (Css.marginTop (rem 0.5))
                     ]
+                ]
+                contents
+    in
+    Html.div
+        [ css
+            ([ Css.displayFlex
+             , Css.flexDirection Css.column
+             , Css.alignItems Css.start
+             , spaceChildrenAndP (Css.marginTop (rem 1))
+             ]
+                ++ styles
+            )
+        ]
+        (heading 2 "Settings"
+            :: (case ( model.user, remoteUsers ) of
+                    ( Got (AnonymousUser id), Got users ) ->
+                        [ section
+                            [ heading 3 "Your name"
+                            , userNameInputView (getUserNameInput model.userNameInput id users)
+                            ]
+                        , section
+                            [ heading 3 "Login"
+                            , Html.p [] [ text ("Logged in anonymously as " ++ id ++ ".") ]
+                            , Html.button
+                                [ css [ buttonStyle ]
+                                , onClick LogInWithGoogleClicked
+                                ]
+                                [ text "Log in via Google" ]
+                            ]
+                        ]
 
-                Got (GoogleUser user) ->
-                    let
-                        settings =
-                            if Remote.toMaybe user.isAdmin |> Maybe.withDefault False then
-                                if isAdminActiveForUser remoteUser then
-                                    [ Html.button [ css [ buttonStyle ], onClick (SetAdmin False) ] [ text "Deactivate admin" ] ]
+                    ( Got (GoogleUser user), _ ) ->
+                        let
+                            settings =
+                                if Remote.toMaybe user.isAdmin |> Maybe.withDefault False then
+                                    if isAdminActiveForUser model.user then
+                                        [ Html.button [ css [ buttonStyle ], onClick (SetAdmin False) ] [ text "Deactivate admin" ] ]
+
+                                    else
+                                        [ Html.button [ css [ buttonStyle ], onClick (SetAdmin True) ] [ text "Activate admin" ] ]
 
                                 else
-                                    [ Html.button [ css [ buttonStyle ], onClick (SetAdmin True) ] [ text "Activate admin" ] ]
-
-                            else
-                                [ Html.p [ css [ Css.fontStyle Css.italic ] ]
-                                    [ text "You do not have moderator rights, so you cannot activate the moderator tools." ]
-                                , Html.p [ css [ Css.fontStyle Css.italic ] ]
-                                    [ text "If you would like to become a moderator, ask someone who manages this app to add you to the list of moderators and tell them the email address you are logged in with."
-                                    ]
-                                ]
-
-                        logOutButton =
-                            Html.button [ css [ buttonStyle ], onClick LogOutClicked ] [ text "Log out" ]
-
-                        spaceChildrenAndP style =
-                            Css.batch
-                                [ spaceChildren style
-                                , Global.children
-                                    [ Global.p
-                                        [ Css.marginBottom zero
+                                    [ Html.p [ css [ Css.fontStyle Css.italic ] ]
+                                        [ text "You do not have moderator rights, so you cannot activate the moderator tools." ]
+                                    , Html.p [ css [ Css.fontStyle Css.italic ] ]
+                                        [ text "If you would like to become a moderator, ask someone who manages this app to add you to the list of moderators and tell them the email address you are logged in with."
                                         ]
                                     ]
-                                ]
-                    in
-                    [ Html.div
-                        [ css
-                            [ Css.displayFlex
-                            , Css.flexDirection Css.column
-                            , Css.alignItems Css.start
-                            , spaceChildrenAndP (Css.marginTop (rem 2))
-                            ]
-                        ]
-                        (div
+
+                            logOutButton =
+                                Html.button [ css [ buttonStyle ], onClick LogOutClicked ] [ text "Log out" ]
+                        in
+                        [ Html.div
                             [ css
                                 [ Css.displayFlex
                                 , Css.flexDirection Css.column
                                 , Css.alignItems Css.start
-                                , spaceChildrenAndP (Css.marginTop (rem 0.5))
+                                , spaceChildrenAndP (Css.marginTop (rem 2))
                                 ]
                             ]
-                            [ Html.p [] [ text ("Logged in via Google as " ++ user.email ++ ".") ]
-                            , logOutButton
-                            ]
-                            :: settings
-                        )
-                    ]
-            )
-        , Html.div [ css [ Css.marginTop (rem 2) ] ]
-            [ Html.h2 [] [ Html.text "Privacy Policy" ]
-            , Html.p [] [ Html.text "We use ", Html.a [ Attributes.href "https://firebase.google.com/" ] [ Html.text "Google Firebase" ], Html.text ". Specifically, we use its Authentication, Cloud Firestore and Hosting services. You can read their ", Html.a [ Attributes.href "https://firebase.google.com/terms/" ] [ Html.text "Terms of Service" ], Html.text ", their ", Html.a [ Attributes.href "https://firebase.google.com/terms/data-processing-terms" ] [ Html.text "Data Processing and Security Terms" ], Html.text ", and their support page on ", Html.a [ Attributes.href "https://firebase.google.com/support/privacy" ] [ Html.text "Privacy and Security" ], Html.text "." ]
-            , Html.p []
-                [ Html.text "When you open the app, we log you in using Firebase Authentication with an anonymous account to authenticate you. You can also optionally log in with a Google account so that we can give you moderator rights. This helps us ensure that only you can edit your topics and only admins can moderate the discussion."
+                            (div
+                                [ css
+                                    [ Css.displayFlex
+                                    , Css.flexDirection Css.column
+                                    , Css.alignItems Css.start
+                                    , spaceChildrenAndP (Css.marginTop (rem 0.5))
+                                    ]
+                                ]
+                                [ Html.p [] [ text ("Logged in via Google as " ++ user.email ++ ".") ]
+                                , logOutButton
+                                ]
+                                :: settings
+                            )
+                        ]
+
+                    _ ->
+                        [ Html.p [] [ text "Connecting…" ] ]
+               )
+        )
+
+
+spaceChildrenAndP : Css.Style -> Css.Style
+spaceChildrenAndP style =
+    Css.batch
+        [ spaceChildren style
+        , Global.children
+            [ Global.p
+                [ Css.marginBottom zero
                 ]
-            , Html.p [] [ Html.text "The data you send us is stored in Cloud Firestore. The app maintainers have access to it and may modify or delete it at their discretion. To request a copy, modification, or deletion of your data, please contact us at ", Html.a [ Attributes.href "mailto:uxac-lean-coffee@googlegroups.com" ] [ Html.text "uxac-lean-coffee@googlegroups.com" ], Html.text "." ]
             ]
         ]
+
+
+type UserNameInput
+    = UserName String
+    | Input String
+    | Missing String
+
+
+getUserNameInput : Maybe String -> UserId -> Users -> UserNameInput
+getUserNameInput maybeInput userId users =
+    let
+        loggedInUserName =
+            Dict.get userId users
+                |> Maybe.map .name
+    in
+    case loggedInUserName of
+        Just userName ->
+            case maybeInput of
+                Just input ->
+                    Input input
+
+                Nothing ->
+                    UserName userName
+
+        Nothing ->
+            Missing (maybeInput |> Maybe.withDefault "")
+
+
+userNameInputView : UserNameInput -> Html Msg
+userNameInputView userNameInputValue =
+    case userNameInputValue of
+        UserName userName ->
+            Html.div
+                [ css
+                    [ Css.displayFlex
+                    , Css.flexDirection Css.column
+                    , Css.alignItems Css.flexStart
+                    , spaceChildren (Css.marginTop (rem 0.5))
+                    ]
+                ]
+                [ Html.div [] [ text userName ]
+                , Html.button [ css [ buttonStyle ], onClick ChangeUserNameClicked ] [ text "Change" ]
+                ]
+
+        Input input ->
+            userNameInputForm input Nothing
+
+        Missing input ->
+            userNameInputForm input (Just "Please enter a name so that others can recognize you in the speaker list.")
+
+
+userNameInputForm : String -> Maybe String -> Html Msg
+userNameInputForm input maybeHint =
+    Html.form
+        [ css [ fieldContainerStyle ]
+        , onSubmit SaveUserNameClicked
+        ]
+        [ div
+            [ css
+                [ fieldContainerStyle
+                ]
+            ]
+            ((case maybeHint of
+                Just hint ->
+                    [ Html.span
+                        [ css
+                            [ Css.fontStyle Css.italic
+                            ]
+                        ]
+                        [ text hint ]
+                    ]
+
+                Nothing ->
+                    []
+             )
+                ++ [ Html.input
+                        [ value input
+                        , onInput UserNameChanged
+                        , css
+                            [ inputStyle
+                            , Css.marginTop (rem 0.3)
+                            ]
+                        ]
+                        []
+                   ]
+            )
+        , Html.input [ type_ "submit", value "Save", css [ buttonStyle, Css.marginTop (rem 1) ] ] []
+        ]
+
+
+fieldContainerStyle : Css.Style
+fieldContainerStyle =
+    Css.batch
+        [ Css.displayFlex
+        , Css.flexDirection Css.column
+        , Css.alignItems Css.flexStart
+        , spaceChildren (Css.marginTop (rem 0.5))
+        , Css.width (pct 100)
+        ]
+
+
+privacyPolicyView : List (Html Msg)
+privacyPolicyView =
+    [ heading 2 "Privacy Policy"
+    , Html.p [] [ Html.text "We use ", Html.a [ Attributes.href "https://firebase.google.com/" ] [ Html.text "Google Firebase" ], Html.text ". Specifically, we use its Authentication, Cloud Firestore and Hosting services. You can read their ", Html.a [ Attributes.href "https://firebase.google.com/terms/" ] [ Html.text "Terms of Service" ], Html.text ", their ", Html.a [ Attributes.href "https://firebase.google.com/terms/data-processing-terms" ] [ Html.text "Data Processing and Security Terms" ], Html.text ", and their support page on ", Html.a [ Attributes.href "https://firebase.google.com/support/privacy" ] [ Html.text "Privacy and Security" ], Html.text "." ]
+    , Html.p []
+        [ Html.text "When you open the app, we log you in using Firebase Authentication with an anonymous account to authenticate you. You can also optionally log in with a Google account so that we can give you moderator rights. This helps us ensure that only you can edit your topics and only admins can moderate the discussion."
+        ]
+    , Html.p [] [ Html.text "The data you send us is stored in Cloud Firestore. The app maintainers have access to it and may modify or delete it at their discretion. To request a copy, modification, or deletion of your data, please contact us at ", Html.a [ Attributes.href "mailto:uxac-lean-coffee@googlegroups.com" ] [ Html.text "uxac-lean-coffee@googlegroups.com" ], Html.text "." ]
+    ]
+
+
+heading : Int -> String -> Html Msg
+heading level title =
+    let
+        headingCss =
+            css
+                [ Css.margin zero
+                ]
+    in
+    case level of
+        1 ->
+            Html.h1 [ headingCss ] [ text title ]
+
+        2 ->
+            Html.h2 [ headingCss ] [ text title ]
+
+        _ ->
+            Html.h3 [ headingCss ] [ text title ]
 
 
 errorView : Maybe Error -> List (Html Msg)
@@ -1313,7 +1460,7 @@ remainingTimeInput currentInput =
             ]
         ]
         [ Html.form [ onSubmit TimerStarted ]
-            [ input
+            [ Html.input
                 [ type_ "number"
                 , value currentInput
                 , onInput TimerInputChanged
@@ -1322,7 +1469,7 @@ remainingTimeInput currentInput =
                 , css [ inputStyle ]
                 ]
                 []
-            , input
+            , Html.input
                 [ type_ "submit"
                 , value "Start timer"
                 , css
@@ -2034,9 +2181,9 @@ newTopicForm user currentInput =
         [ css [ Css.displayFlex, Css.flexDirection Css.column, Css.alignItems Css.flexStart ]
         , onSubmit (SaveTopic user)
         ]
-        [ label [ css [ Css.displayFlex, Css.flexDirection Css.column, Css.width (pct 100) ] ]
+        [ Html.label [ css [ Css.displayFlex, Css.flexDirection Css.column, Css.width (pct 100) ] ]
             [ text "Add a topic"
-            , input
+            , Html.input
                 [ value currentInput
                 , onInput NewTopicInputChanged
                 , css
@@ -2046,7 +2193,7 @@ newTopicForm user currentInput =
                 ]
                 []
             ]
-        , input [ type_ "submit", value "Submit", css [ buttonStyle, Css.marginTop (rem 1) ] ] []
+        , Html.input [ type_ "submit", value "Submit", css [ buttonStyle, Css.marginTop (rem 1) ] ] []
         ]
 
 
