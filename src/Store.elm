@@ -4,6 +4,7 @@ import Dict exposing (Dict)
 import Json.Decode as Decode exposing (Decoder)
 import Json.Encode as Encode
 import Remote exposing (Remote(..))
+import Time
 
 
 type Store
@@ -30,10 +31,10 @@ getUserNames (Store store) =
     store.userNames
 
 
-setUserName : UserId -> String -> Cmd msg
-setUserName userId userName =
+setUserName : Workspace -> UserId -> String -> Cmd msg
+setUserName workspace userId userName =
     setDoc
-        { docPath = usersCollectionPath ++ [ userId ]
+        { docPath = usersCollectionPath workspace ++ [ userId ]
         , doc = Encode.object [ ( "name", Encode.string userName ) ]
         }
 
@@ -66,9 +67,46 @@ getSpeakers (Store store) =
     store.speakers
 
 
-enqueue : UserId -> Store -> Store
-enqueue userId (Store store) =
-    Store { store | speakers = store.speakers ++ [ userId ] }
+enqueue : Workspace -> TimestampField -> UserId -> Cmd msg
+enqueue workspace timestamp userId =
+    insertDoc
+        { collectionPath = speakersCollectionPath workspace
+        , doc =
+            Encode.object
+                [ ( "userId", Encode.string userId )
+                , ( "whenEnqueued", timestamp )
+                ]
+        }
+
+
+speakersDecoder : Decoder Speakers
+speakersDecoder =
+    Decode.list
+        (Decode.map2
+            (\userId maybeEnqueued ->
+                ( userId
+                , maybeEnqueued
+                )
+            )
+            (dataField "userId" Decode.string)
+            (dataField "whenEnqueued" (Decode.maybe timestampDecoder))
+        )
+        {- Firestore updates the collection locally, but the timestamp is null until the server responds.
+           We ignore such entries until they are available with a timestamp.
+        -}
+        |> Decode.map
+            (List.filterMap
+                (\( userId, maybeEnqueued ) ->
+                    case maybeEnqueued of
+                        Just enqueued ->
+                            Just ( userId, enqueued )
+
+                        Nothing ->
+                            Nothing
+                )
+            )
+        |> Decode.map (List.sortBy (\( _, enqueued ) -> Time.posixToMillis enqueued))
+        |> Decode.map (List.map Tuple.first)
 
 
 
@@ -79,23 +117,23 @@ init : Store
 init =
     Store
         { userNames = Loading
-        , speakers = [ "Johannes", "Roksy", "Jonathan" ]
+        , speakers = []
         }
 
 
 type Msg
-    = UsersReceived (List UserNameEntry)
+    = UsersReceived UserNames
+    | SpeakersReceived Speakers
 
 
 update : Msg -> Store -> Store
 update msg (Store store) =
     case msg of
-        UsersReceived userList ->
-            let
-                users =
-                    Dict.fromList userList
-            in
+        UsersReceived users ->
             Store { store | userNames = Got users }
+
+        SpeakersReceived speakers ->
+            Store { store | speakers = speakers }
 
 
 dataField : String -> Decoder a -> Decoder a
@@ -107,9 +145,51 @@ dataField field decoder =
 -- Ports
 
 
-usersCollectionPath : Path
-usersCollectionPath =
+type alias TimestampField =
+    Decode.Value
+
+
+timestampDecoder : Decoder Time.Posix
+timestampDecoder =
+    Decode.map2
+        (\seconds nanoseconds ->
+            let
+                {- The nanoseconds count the fractions of seconds.
+                   See https://firebase.google.com/docs/reference/js/firebase.firestore.Timestamp.
+                -}
+                milliseconds =
+                    (toFloat seconds * 1000)
+                        + (toFloat nanoseconds / 1000000)
+            in
+            Time.millisToPosix (round milliseconds)
+        )
+        (Decode.field "seconds" Decode.int)
+        (Decode.field "nanoseconds" Decode.int)
+
+
+usersCollectionPath : Workspace -> Path
+usersCollectionPath workspace =
     [ "users" ]
+        |> prependWorkspace workspace
+
+
+speakersCollectionPath : Workspace -> Path
+speakersCollectionPath workspace =
+    [ "speakers" ]
+        |> prependWorkspace workspace
+
+
+type alias Workspace =
+    String
+
+
+prependWorkspace : Workspace -> Path -> Path
+prependWorkspace workspace path =
+    let
+        serializedWorkspace =
+            "_" ++ workspace
+    in
+    [ "workspaces", serializedWorkspace ] ++ path
 
 
 type alias Path =
@@ -136,3 +216,19 @@ setDoc info =
 
 
 port setDoc_ : Encode.Value -> Cmd msg
+
+
+type alias InsertDocInfo =
+    { collectionPath : Path, doc : Encode.Value }
+
+
+insertDoc : InsertDocInfo -> Cmd msg
+insertDoc info =
+    Encode.object
+        [ ( "path", encodePath info.collectionPath )
+        , ( "doc", info.doc )
+        ]
+        |> insertDoc_
+
+
+port insertDoc_ : Encode.Value -> Cmd msg

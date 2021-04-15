@@ -83,10 +83,6 @@ type alias VoteCountMap =
     TopicId -> Int
 
 
-type alias Workspace =
-    String
-
-
 sortTopicList : VoteCountMap -> TopicList -> TopicList
 sortTopicList voteCountMap oldTopics =
     SortedDict.stableSortWith (topicListSort voteCountMap) oldTopics
@@ -206,10 +202,6 @@ type ErrorInfo
 
 type alias FirestoreErrorInfo =
     { code : String, errorMessage : String }
-
-
-type alias TimestampField =
-    Decode.Value
 
 
 type alias Flags =
@@ -558,7 +550,7 @@ update msg model =
         SaveUserNameClicked ->
             case ( model.user, model.userNameInput ) of
                 ( Got user, Just userName ) ->
-                    ( { model | userNameInput = Nothing }, setUserName (getUserId user) userName )
+                    ( { model | userNameInput = Nothing }, Store.setUserName model.workspace (getUserId user) userName )
 
                 _ ->
                     ( model, Cmd.none )
@@ -566,7 +558,7 @@ update msg model =
         EnqueueClicked ->
             case model.user of
                 Got user ->
-                    ( { model | store = Store.enqueue (getUserId user) model.store }, Cmd.none )
+                    ( model, Store.enqueue model.workspace model.timestampField (getUserId user) )
 
                 Loading ->
                     ( model, Cmd.none )
@@ -2337,15 +2329,6 @@ discussedCollectionPath workspace =
         |> prependWorkspace workspace
 
 
-prependWorkspace : Workspace -> Path -> Path
-prependWorkspace workspace path =
-    let
-        serializedWorkspace =
-            "_" ++ workspace
-    in
-    [ "workspaces", serializedWorkspace ] ++ path
-
-
 firestoreSubscriptionsCmd : Workspace -> Cmd Msg
 firestoreSubscriptionsCmd workspace =
     Cmd.batch
@@ -2356,7 +2339,8 @@ firestoreSubscriptionsCmd workspace =
         , subscribe { kind = Collection, path = continuationVoteCollectionPath workspace, tag = ContinuationVotesTag }
         , subscribe { kind = Collection, path = discussedCollectionPath workspace, tag = DiscussedTag }
         , subscribe { kind = Doc, path = discussionDeadlineDocPath workspace, tag = DeadlineTag }
-        , subscribe { kind = Collection, path = usersCollectionPath, tag = UsersTag }
+        , subscribe { kind = Collection, path = usersCollectionPath workspace, tag = UserNamesTag }
+        , subscribe { kind = Collection, path = speakersCollectionPath workspace, tag = SpeakersTag }
         ]
 
 
@@ -2416,7 +2400,8 @@ type SubscriptionTag
     | ContinuationVotesTag
     | DiscussedTag
     | DeadlineTag
-    | UsersTag
+    | UserNamesTag
+    | SpeakersTag
 
 
 encodeSubscriptionTag : SubscriptionTag -> Encode.Value
@@ -2445,8 +2430,11 @@ encodeSubscriptionTag tag =
                 DeadlineTag ->
                     "deadline"
 
-                UsersTag ->
+                UserNamesTag ->
                     "users"
+
+                SpeakersTag ->
+                    "speakers"
     in
     Encode.string raw
 
@@ -2479,7 +2467,10 @@ subscriptionTagDecoder =
                         Decode.succeed DeadlineTag
 
                     "users" ->
-                        Decode.succeed UsersTag
+                        Decode.succeed UserNamesTag
+
+                    "speakers" ->
+                        Decode.succeed SpeakersTag
 
                     _ ->
                         Decode.fail "Invalid subscription kind"
@@ -2534,9 +2525,13 @@ parseFirestoreSubscription value =
                                             deadlineDecoder
                                                 |> Decode.map DeadlineReceived
 
-                                        UsersTag ->
+                                        UserNamesTag ->
                                             userNamesDecoder
                                                 |> Decode.map (\users -> StoreMsg <| UsersReceived users)
+
+                                        SpeakersTag ->
+                                            speakersDecoder
+                                                |> Decode.map (\speakers -> StoreMsg <| SpeakersReceived speakers)
                             in
                             Decode.field "data" dataDecoder
                         )
@@ -2584,22 +2579,6 @@ changeTypeDecoder =
                     _ ->
                         Decode.fail "Invalid change type"
             )
-
-
-type alias InsertDocInfo =
-    { collectionPath : Path, doc : Encode.Value }
-
-
-insertDoc : InsertDocInfo -> Cmd msg
-insertDoc info =
-    Encode.object
-        [ ( "path", encodePath info.collectionPath )
-        , ( "doc", info.doc )
-        ]
-        |> insertDoc_
-
-
-port insertDoc_ : Encode.Value -> Cmd msg
 
 
 deleteDocs : List Path -> Cmd msg
@@ -2734,24 +2713,6 @@ timestampEncoder time =
         [ ( "seconds", Encode.int seconds )
         , ( "nanoseconds", Encode.int nanoseconds )
         ]
-
-
-timestampDecoder : Decoder Time.Posix
-timestampDecoder =
-    Decode.map2
-        (\seconds nanoseconds ->
-            let
-                {- The nanoseconds count the fractions of seconds.
-                   See https://firebase.google.com/docs/reference/js/firebase.firestore.Timestamp.
-                -}
-                milliseconds =
-                    (toFloat seconds * 1000)
-                        + (toFloat nanoseconds / 1000000)
-            in
-            Time.millisToPosix (round milliseconds)
-        )
-        (Decode.field "seconds" Decode.int)
-        (Decode.field "nanoseconds" Decode.int)
 
 
 votesDecoder : Decoder Votes
