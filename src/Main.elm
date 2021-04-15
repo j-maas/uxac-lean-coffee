@@ -540,10 +540,9 @@ update msg model =
         ChangeUserNameClicked ->
             let
                 userName =
-                    (case ( model.user, getUsers model.store ) of
+                    (case ( model.user, getUserNames model.store ) of
                         ( Got user, Got users ) ->
                             Dict.get (getUserId user) users
-                                |> Maybe.map .name
 
                         _ ->
                             Nothing
@@ -854,7 +853,7 @@ view model =
                 [ logo
                 , h1 [ css [ Css.margin zero ] ] [ text headingText ]
                 ]
-             , settingsContainerView model.user model.userNameInput (getUsers model.store)
+             , settingsContainerView model.user model.userNameInput (getUserNames model.store)
              ]
                 ++ errorView model.error
                 ++ discussionView model.user inDiscussion continuationVotes model model.timerInput
@@ -1007,7 +1006,7 @@ extract predicate list =
         |> Tuple.mapFirst List.head
 
 
-settingsContainerView : Remote Login -> Maybe String -> Remote Users -> Html Msg
+settingsContainerView : Remote Login -> Maybe String -> Remote UserNames -> Html Msg
 settingsContainerView remoteUser maybeUserNameInput users =
     Html.details [ css [ detailsStyle ] ]
         [ Html.summary [] [ text "Settings & Privacy Policy" ]
@@ -1017,7 +1016,7 @@ settingsContainerView remoteUser maybeUserNameInput users =
         ]
 
 
-settingsView : List Css.Style -> { a | user : Remote Login, userNameInput : Maybe String } -> Remote Users -> Html Msg
+settingsView : List Css.Style -> { a | user : Remote Login, userNameInput : Maybe String } -> Remote UserNames -> Html Msg
 settingsView styles model remoteUsers =
     let
         section contents =
@@ -1127,12 +1126,11 @@ type UserNameInput
     | Missing String
 
 
-getUserNameInput : Maybe String -> UserId -> Users -> UserNameInput
+getUserNameInput : Maybe String -> UserId -> UserNames -> UserNameInput
 getUserNameInput maybeInput userId users =
     let
         loggedInUserName =
             Dict.get userId users
-                |> Maybe.map .name
     in
     case loggedInUserName of
         Just userName ->
@@ -2526,7 +2524,7 @@ parseFirestoreSubscription value =
                                                 |> Decode.map DeadlineReceived
 
                                         UsersTag ->
-                                            usersDecoder
+                                            userNamesDecoder
                                                 |> Decode.map (\users -> StoreMsg <| UsersReceived users)
                             in
                             Decode.field "data" dataDecoder

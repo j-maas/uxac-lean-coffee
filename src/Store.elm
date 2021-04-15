@@ -7,7 +7,7 @@ import Remote exposing (Remote(..))
 
 type Store
     = Store
-        { users : Remote Users
+        { userNames : Remote UserNames
         }
 
 
@@ -15,26 +15,25 @@ type alias UserId =
     String
 
 
-type alias Users =
-    Dict UserId { name : String }
+type alias UserNames =
+    Dict UserId String
 
 
 type alias UserEntry =
     ( UserId
-    , { name : String
-      }
+    , String
     )
 
 
-getUsers : Store -> Remote Users
-getUsers (Store store) =
-    store.users
+getUserNames : Store -> Remote UserNames
+getUserNames (Store store) =
+    store.userNames
 
 
 init : Store
 init =
     Store
-        { users = Loading
+        { userNames = Loading
         }
 
 
@@ -50,17 +49,16 @@ update msg (Store store) =
                 users =
                     Dict.fromList userList
             in
-            Store { store | users = Got users }
+            Store { store | userNames = Got users }
 
 
-usersDecoder : Decoder (List UserEntry)
-usersDecoder =
+userNamesDecoder : Decoder (List UserEntry)
+userNamesDecoder =
     Decode.list
         (Decode.map2
             (\userId name ->
                 ( userId
-                , { name = name
-                  }
+                , name
                 )
             )
             (Decode.field "id" Decode.string)
