@@ -25,12 +25,6 @@ type alias UserNames =
     Dict UserId String
 
 
-type alias UserNameEntry =
-    ( UserId
-    , String
-    )
-
-
 getUserNames : Store -> Remote UserNames
 getUserNames (Store store) =
     store.userNames
@@ -44,7 +38,7 @@ setUserName userId userName =
         }
 
 
-userNamesDecoder : Decoder (List UserNameEntry)
+userNamesDecoder : Decoder UserNames
 userNamesDecoder =
     Decode.list
         (Decode.map2
@@ -56,6 +50,7 @@ userNamesDecoder =
             (Decode.field "id" Decode.string)
             (dataField "name" Decode.string)
         )
+        |> Decode.map Dict.fromList
 
 
 
