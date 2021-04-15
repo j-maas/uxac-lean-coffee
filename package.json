@@ -4,8 +4,7 @@
     "test": "tests"
   },
   "dependencies": {
-    "firebase": "^8.4.1",
-    "firebase-app": "0.0.1"
+    "firebase": "^8.4.1"
   },
   "devDependencies": {
     "create-elm-app": "^5.22.0"
