@@ -1333,6 +1333,7 @@ discussionView creds maybeDiscussedTopic continuationVotes times timerInput =
                )
             ++ remainingTime creds times timerInput
             :: continuationVote creds continuationVotes
+            ++ [ speakerListView ]
         )
 
 
@@ -1612,6 +1613,21 @@ continuationVoteButtons user continuationVotes =
             ]
         ]
         [ stayButton, abstainButton, moveOnButton ]
+
+
+speakerListView : Html Msg
+speakerListView =
+    let
+        speakers =
+            [ "Johannes", "Roksy", "Jonathan" ]
+    in
+    Html.ol []
+        (List.map
+            (\speakerName ->
+                Html.li [] [ text speakerName ]
+            )
+            speakers
+        )
 
 
 topicEntry : Remote Login -> String -> Html Msg
