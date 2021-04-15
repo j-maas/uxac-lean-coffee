@@ -1,13 +1,13 @@
 module Store exposing (..)
 
-import Dict
+import Dict exposing (Dict)
 import Json.Decode as Decode exposing (Decoder)
 import Remote exposing (Remote(..))
 
 
 type Store
     = Store
-        { users : Remote (List User)
+        { users : Remote Users
         }
 
 
@@ -15,8 +15,20 @@ type alias UserId =
     String
 
 
-type alias User =
-    { id : UserId, name : String }
+type alias Users =
+    Dict UserId { name : String }
+
+
+type alias UserEntry =
+    ( UserId
+    , { name : String
+      }
+    )
+
+
+getUsers : Store -> Remote Users
+getUsers (Store store) =
+    store.users
 
 
 init : Store
@@ -27,26 +39,31 @@ init =
 
 
 type Msg
-    = UsersReceived (List User)
+    = UsersReceived (List UserEntry)
 
 
 update : Msg -> Store -> Store
 update msg (Store store) =
     case msg of
-        UsersReceived users ->
+        UsersReceived userList ->
+            let
+                users =
+                    Dict.fromList userList
+            in
             Store { store | users = Got users }
 
 
-usersDecoder : Decoder (List User)
+usersDecoder : Decoder (List UserEntry)
 usersDecoder =
     Decode.list
         (Decode.map2
             (\userId name ->
-                { id = userId
-                , name = name
-                }
+                ( userId
+                , { name = name
+                  }
+                )
             )
-            (dataField "userId" Decode.string)
+            (Decode.field "id" Decode.string)
             (dataField "name" Decode.string)
         )
 

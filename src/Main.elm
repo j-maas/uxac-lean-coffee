@@ -7,7 +7,7 @@ import Css.Animations as Animations
 import Css.Global as Global
 import Css.Media as Media
 import Dict exposing (Dict)
-import Html.Styled as Html exposing (Attribute, Html, button, div, form, h1, h2, img, input, label, li, ol, span, text, textarea)
+import Html.Styled as Html exposing (Attribute, Html, button, div, h1, h2, img, input, label, li, ol, span, text, textarea)
 import Html.Styled.Attributes as Attributes exposing (css, src, type_, value)
 import Html.Styled.Events exposing (on, onClick, onInput, onMouseEnter, onSubmit)
 import Json.Decode as Decode exposing (Decoder)
@@ -51,6 +51,7 @@ type alias Model =
     , newTopicInput : String
     , user : Remote Login
     , store : Store
+    , userNameInput : Maybe String
     , error : Maybe Error
     , workspace : Workspace
     , uuidSeeds : UUID.Seeds
@@ -252,6 +253,7 @@ init flags =
       , timerInput = "10"
       , newTopicInput = ""
       , user = Loading
+      , userNameInput = Nothing
       , store = Store.init
       , error = Nothing
       , workspace = workspace
@@ -300,6 +302,8 @@ type Msg
     | ErrorReceived (Result Decode.Error FirestoreErrorInfo)
     | DismissError
     | NewTopicInputChanged String
+    | UserNameChanged String
+    | SaveUserNameClicked
     | Tick Time.Posix
     | TimerInputChanged String
     | TimerStarted
@@ -532,6 +536,17 @@ update msg model =
         NewTopicInputChanged value ->
             ( { model | newTopicInput = value }, Cmd.none )
 
+        UserNameChanged newUserName ->
+            ( { model | userNameInput = Just newUserName }, Cmd.none )
+
+        SaveUserNameClicked ->
+            case ( model.user, model.userNameInput ) of
+                ( Got user, Just userName ) ->
+                    ( model, setUserName (getUserId user) userName )
+
+                _ ->
+                    ( model, Cmd.none )
+
         Tick now ->
             ( { model | now = Just now }, Cmd.none )
 
@@ -637,6 +652,14 @@ setTopic workspace topicId newTopic =
     setDoc
         { docPath = topicPath
         , doc = topicEncoder newTopic
+        }
+
+
+setUserName : UserId -> String -> Cmd msg
+setUserName userId userName =
+    setDoc
+        { docPath = usersCollectionPath ++ [ userId ]
+        , doc = Encode.object [ ( "name", Encode.string userName ) ]
         }
 
 
@@ -815,7 +838,7 @@ view model =
                 [ logo
                 , h1 [ css [ Css.margin zero ] ] [ text heading ]
                 ]
-             , settingsView model.user
+             , settingsView model.user model.userNameInput (getUsers model.store)
              ]
                 ++ errorView model.error
                 ++ discussionView model.user inDiscussion continuationVotes model model.timerInput
@@ -968,8 +991,8 @@ extract predicate list =
         |> Tuple.mapFirst List.head
 
 
-settingsView : Remote Login -> Html Msg
-settingsView remoteUser =
+settingsView : Remote Login -> Maybe String -> Remote Users -> Html Msg
+settingsView remoteUser userNameInput users =
     Html.details [ css [ detailsStyle ] ]
         [ Html.summary [] [ text "Settings & Privacy Policy" ]
         , Html.div [ css [ Css.marginTop (rem 1) ] ]
@@ -978,7 +1001,36 @@ settingsView remoteUser =
                     [ Html.p [] [ text "Connecting…" ] ]
 
                 Got (AnonymousUser id) ->
+                    let
+                        userName =
+                            Remote.toMaybe users
+                                |> Maybe.andThen (Dict.get id)
+                                |> Maybe.map .name
+                                |> Maybe.withDefault id
+
+                        userNameInputToDisplay =
+                            userNameInput
+                                |> Maybe.withDefault userName
+                    in
                     [ Html.p [] [ text ("Logged in anonymously as " ++ id ++ ".") ]
+                    , Html.form
+                        [ css [ Css.displayFlex, Css.flexDirection Css.column, Css.alignItems Css.flexStart ]
+                        , onSubmit SaveUserNameClicked
+                        ]
+                        [ label [ css [ Css.displayFlex, Css.flexDirection Css.column, Css.width (pct 100) ] ]
+                            [ text "Add a topic"
+                            , input
+                                [ value userNameInputToDisplay
+                                , onInput UserNameChanged
+                                , css
+                                    [ inputStyle
+                                    , Css.marginTop (rem 0.3)
+                                    ]
+                                ]
+                                []
+                            ]
+                        , input [ type_ "submit", value "Save", css [ buttonStyle, Css.marginTop (rem 1) ] ] []
+                        ]
                     , Html.button
                         [ css [ buttonStyle ]
                         , onClick LogInWithGoogleClicked
@@ -1260,7 +1312,7 @@ remainingTimeInput currentInput =
             , Css.alignItems Css.center
             ]
         ]
-        [ form [ onSubmit TimerStarted ]
+        [ Html.form [ onSubmit TimerStarted ]
             [ input
                 [ type_ "number"
                 , value currentInput
@@ -1706,7 +1758,7 @@ topicToVoteCard remoteUser ( topicId, entry ) =
         content =
             case entry.beingEdited of
                 Just edit ->
-                    form
+                    Html.form
                         [ css
                             [ Css.displayFlex
                             , Css.justifyContent Css.spaceBetween
@@ -1978,7 +2030,7 @@ submitForm fetchedUser currentInput =
 
 newTopicForm : Login -> String -> Html Msg
 newTopicForm user currentInput =
-    form
+    Html.form
         [ css [ Css.displayFlex, Css.flexDirection Css.column, Css.alignItems Css.flexStart ]
         , onSubmit (SaveTopic user)
         ]
