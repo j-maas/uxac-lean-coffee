@@ -1621,13 +1621,16 @@ speakerListView =
         speakers =
             [ "Johannes", "Roksy", "Jonathan" ]
     in
-    Html.ol []
-        (List.map
-            (\speakerName ->
-                Html.li [] [ text speakerName ]
+    Html.div []
+        [ Html.ol []
+            (List.map
+                (\speakerName ->
+                    Html.li [] [ text speakerName ]
+                )
+                speakers
             )
-            speakers
-        )
+        , Html.button [ css [ buttonStyle ] ] [ text "Enqueue" ]
+        ]
 
 
 topicEntry : Remote Login -> String -> Html Msg
