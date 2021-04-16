@@ -87,6 +87,13 @@ enqueue workspace timestamp userId =
         }
 
 
+removeSpeakerContribution : Workspace -> SpeakerContributionId -> Cmd msg
+removeSpeakerContribution workspace speakerContributionId =
+    deleteDocs
+        [ speakersCollectionPath workspace ++ [ speakerContributionId ]
+        ]
+
+
 speakersDecoder : Decoder SpeakerList
 speakersDecoder =
     Decode.list
@@ -241,3 +248,14 @@ insertDoc info =
 
 
 port insertDoc_ : Encode.Value -> Cmd msg
+
+
+deleteDocs : List Path -> Cmd msg
+deleteDocs paths =
+    Encode.object
+        [ ( "paths", Encode.list encodePath paths )
+        ]
+        |> deleteDocs_
+
+
+port deleteDocs_ : Encode.Value -> Cmd msg

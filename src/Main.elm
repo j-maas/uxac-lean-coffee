@@ -298,6 +298,7 @@ type Msg
     | UserNameChanged String
     | SaveUserNameClicked
     | EnqueueClicked
+    | RemoveSpeakerContributionClicked SpeakerContributionId
     | Tick Time.Posix
     | TimerInputChanged String
     | TimerStarted
@@ -562,6 +563,9 @@ update msg model =
 
                 Loading ->
                     ( model, Cmd.none )
+
+        RemoveSpeakerContributionClicked speakerContributionId ->
+            ( model, Store.removeSpeakerContribution model.workspace speakerContributionId )
 
         Tick now ->
             ( { model | now = Just now }, Cmd.none )
@@ -1631,11 +1635,11 @@ speakerListView remoteUserNames remoteSpeakerList =
             ( Got userNames, Got speakerList ) ->
                 [ Html.ol []
                     (List.filterMap
-                        (\( _, userId ) ->
+                        (\( speakerContributionId, userId ) ->
                             Dict.get userId userNames
                                 |> Maybe.map
                                     (\speakerName ->
-                                        Html.li [] [ text speakerName ]
+                                        Html.li [] (speakerContributionView speakerName True speakerContributionId)
                                     )
                         )
                         speakerList
@@ -1650,6 +1654,13 @@ speakerListView remoteUserNames remoteSpeakerList =
             _ ->
                 [ text "Loading speaker list" ]
         )
+
+
+speakerContributionView : String -> Bool -> SpeakerContributionId -> List (Html Msg)
+speakerContributionView speakerName canModify speakerContributionId =
+    [ text speakerName
+    , Html.button [ css [ buttonStyle ], onClick (RemoveSpeakerContributionClicked speakerContributionId) ] [ text "Remove" ]
+    ]
 
 
 topicEntry : Remote Login -> String -> Html Msg
@@ -2591,17 +2602,6 @@ changeTypeDecoder =
                     _ ->
                         Decode.fail "Invalid change type"
             )
-
-
-deleteDocs : List Path -> Cmd msg
-deleteDocs paths =
-    Encode.object
-        [ ( "paths", Encode.list encodePath paths )
-        ]
-        |> deleteDocs_
-
-
-port deleteDocs_ : Encode.Value -> Cmd msg
 
 
 port receiveUser_ : (Encode.Value -> msg) -> Sub msg
