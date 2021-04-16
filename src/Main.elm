@@ -1311,7 +1311,7 @@ discussionView :
     -> Remote UserNames
     -> Remote SpeakerList
     -> Html Msg
-discussionView creds maybeDiscussedTopic continuationVotes times timerInput remoteUserNames remoteSpeakers =
+discussionView remoteLogin maybeDiscussedTopic continuationVotes times timerInput remoteUserNames remoteSpeakers =
     div
         [ css
             [ borderRadius
@@ -1323,7 +1323,7 @@ discussionView creds maybeDiscussedTopic continuationVotes times timerInput remo
         (h2 [ css [ Css.margin zero ] ] [ text "In discussion" ]
             :: (case maybeDiscussedTopic of
                     Just topic ->
-                        [ topicToDiscussCard creds topic
+                        [ topicToDiscussCard remoteLogin topic
                         ]
 
                     Nothing ->
@@ -1344,9 +1344,9 @@ discussionView creds maybeDiscussedTopic continuationVotes times timerInput remo
                             ]
                         ]
                )
-            ++ remainingTime creds times timerInput
-            :: continuationVote creds continuationVotes
-            ++ [ speakerListView remoteUserNames remoteSpeakers ]
+            ++ remainingTime remoteLogin times timerInput
+            :: continuationVote remoteLogin continuationVotes
+            ++ [ speakerListView remoteLogin remoteUserNames remoteSpeakers ]
         )
 
 
@@ -1628,18 +1628,29 @@ continuationVoteButtons user continuationVotes =
         [ stayButton, abstainButton, moveOnButton ]
 
 
-speakerListView : Remote UserNames -> Remote SpeakerList -> Html Msg
-speakerListView remoteUserNames remoteSpeakerList =
+speakerListView : Remote Login -> Remote UserNames -> Remote SpeakerList -> Html Msg
+speakerListView remoteLogin remoteUserNames remoteSpeakerList =
     Html.div []
-        (case ( remoteUserNames, remoteSpeakerList ) of
-            ( Got userNames, Got speakerList ) ->
+        (case ( remoteLogin, remoteUserNames, remoteSpeakerList ) of
+            ( Got login, Got userNames, Got speakerList ) ->
                 [ Html.ol []
                     (List.filterMap
                         (\( speakerContributionId, userId ) ->
                             Dict.get userId userNames
                                 |> Maybe.map
                                     (\speakerName ->
-                                        Html.li [] (speakerContributionView speakerName True speakerContributionId)
+                                        let
+                                            currentUserId =
+                                                getUserId login
+
+                                            canModify =
+                                                currentUserId == userId
+                                        in
+                                        Html.li []
+                                            (speakerContributionView speakerName
+                                                canModify
+                                                speakerContributionId
+                                            )
                                     )
                         )
                         speakerList
@@ -1658,9 +1669,18 @@ speakerListView remoteUserNames remoteSpeakerList =
 
 speakerContributionView : String -> Bool -> SpeakerContributionId -> List (Html Msg)
 speakerContributionView speakerName canModify speakerContributionId =
-    [ text speakerName
-    , Html.button [ css [ buttonStyle ], onClick (RemoveSpeakerContributionClicked speakerContributionId) ] [ text "Remove" ]
-    ]
+    text speakerName
+        :: (if canModify then
+                [ Html.button
+                    [ css [ buttonStyle ]
+                    , onClick (RemoveSpeakerContributionClicked speakerContributionId)
+                    ]
+                    [ text "Remove" ]
+                ]
+
+            else
+                []
+           )
 
 
 topicEntry : Remote Login -> String -> Html Msg
