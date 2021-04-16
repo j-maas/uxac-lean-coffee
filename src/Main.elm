@@ -1631,8 +1631,8 @@ speakerListView remoteUserNames remoteSpeakers =
             ( Got userNames, Got speakers ) ->
                 [ Html.ol []
                     (List.filterMap
-                        (\speakerId ->
-                            Dict.get speakerId userNames
+                        (\speaker ->
+                            Dict.get speaker.userId userNames
                                 |> Maybe.map
                                     (\speakerName ->
                                         Html.li [] [ text speakerName ]

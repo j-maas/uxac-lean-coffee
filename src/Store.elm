@@ -59,7 +59,17 @@ userNamesDecoder =
 
 
 type alias Speakers =
-    List UserId
+    List Speaker
+
+
+type alias Speaker =
+    { userId : UserId
+    , speakerId : SpeakerId
+    }
+
+
+type alias SpeakerId =
+    String
 
 
 getSpeakers : Store -> Remote Speakers
@@ -82,12 +92,15 @@ enqueue workspace timestamp userId =
 speakersDecoder : Decoder Speakers
 speakersDecoder =
     Decode.list
-        (Decode.map2
-            (\userId maybeEnqueued ->
-                ( userId
-                , maybeEnqueued
+        (Decode.map3
+            (\speakerId userId maybeEnqueued ->
+                ( maybeEnqueued
+                , { speakerId = speakerId
+                  , userId = userId
+                  }
                 )
             )
+            (Decode.field "id" Decode.string)
             (dataField "userId" Decode.string)
             (dataField "whenEnqueued" (Decode.maybe timestampDecoder))
         )
@@ -96,17 +109,17 @@ speakersDecoder =
         -}
         |> Decode.map
             (List.filterMap
-                (\( userId, maybeEnqueued ) ->
+                (\( maybeEnqueued, speaker ) ->
                     case maybeEnqueued of
                         Just enqueued ->
-                            Just ( userId, enqueued )
+                            Just ( enqueued, speaker )
 
                         Nothing ->
                             Nothing
                 )
             )
-        |> Decode.map (List.sortBy (\( _, enqueued ) -> Time.posixToMillis enqueued))
-        |> Decode.map (List.map Tuple.first)
+        |> Decode.map (List.sortBy (\( enqueued, _ ) -> Time.posixToMillis enqueued))
+        |> Decode.map (List.map Tuple.second)
 
 
 
