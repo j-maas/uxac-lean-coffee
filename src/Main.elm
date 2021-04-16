@@ -1305,7 +1305,7 @@ discussionView :
     -> { b | now : Maybe Time.Posix, deadline : Maybe Time.Posix }
     -> String
     -> Remote UserNames
-    -> Remote Speakers
+    -> Remote SpeakerList
     -> Html Msg
 discussionView creds maybeDiscussedTopic continuationVotes times timerInput remoteUserNames remoteSpeakers =
     div
@@ -1624,21 +1624,21 @@ continuationVoteButtons user continuationVotes =
         [ stayButton, abstainButton, moveOnButton ]
 
 
-speakerListView : Remote UserNames -> Remote Speakers -> Html Msg
-speakerListView remoteUserNames remoteSpeakers =
+speakerListView : Remote UserNames -> Remote SpeakerList -> Html Msg
+speakerListView remoteUserNames remoteSpeakerList =
     Html.div []
-        (case ( remoteUserNames, remoteSpeakers ) of
-            ( Got userNames, Got speakers ) ->
+        (case ( remoteUserNames, remoteSpeakerList ) of
+            ( Got userNames, Got speakerList ) ->
                 [ Html.ol []
                     (List.filterMap
-                        (\speaker ->
-                            Dict.get speaker.userId userNames
+                        (\( _, userId ) ->
+                            Dict.get userId userNames
                                 |> Maybe.map
                                     (\speakerName ->
                                         Html.li [] [ text speakerName ]
                                     )
                         )
-                        speakers
+                        speakerList
                     )
                 , Html.button
                     [ css [ buttonStyle ]

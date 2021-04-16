@@ -10,7 +10,7 @@ import Time
 type Store
     = Store
         { userNames : Remote UserNames
-        , speakers : Remote Speakers
+        , speakers : Remote SpeakerList
         }
 
 
@@ -58,21 +58,19 @@ userNamesDecoder =
 -- Speakers
 
 
-type alias Speakers =
-    List Speaker
+type alias SpeakerList =
+    List ( SpeakerContributionId, Speaker )
 
 
-type alias Speaker =
-    { userId : UserId
-    , speakerId : SpeakerId
-    }
-
-
-type alias SpeakerId =
+type alias SpeakerContributionId =
     String
 
 
-getSpeakers : Store -> Remote Speakers
+type alias Speaker =
+    UserId
+
+
+getSpeakers : Store -> Remote SpeakerList
 getSpeakers (Store store) =
     store.speakers
 
@@ -89,15 +87,13 @@ enqueue workspace timestamp userId =
         }
 
 
-speakersDecoder : Decoder Speakers
+speakersDecoder : Decoder SpeakerList
 speakersDecoder =
     Decode.list
         (Decode.map3
-            (\speakerId userId maybeEnqueued ->
+            (\speakerContributionId userId maybeEnqueued ->
                 ( maybeEnqueued
-                , { speakerId = speakerId
-                  , userId = userId
-                  }
+                , ( speakerContributionId, userId )
                 )
             )
             (Decode.field "id" Decode.string)
@@ -136,7 +132,7 @@ init =
 
 type Msg
     = UsersReceived UserNames
-    | SpeakersReceived Speakers
+    | SpeakersReceived SpeakerList
 
 
 update : Msg -> Store -> Store
