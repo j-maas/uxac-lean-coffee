@@ -1346,7 +1346,7 @@ discussionView remoteLogin maybeDiscussedTopic continuationVotes times timerInpu
                )
             ++ remainingTime remoteLogin times timerInput
             :: continuationVote remoteLogin continuationVotes
-            ++ [ speakerSectionView remoteLogin remoteUserNames remoteSpeakers ]
+            ++ [ speakerSectionView remoteLogin remoteSpeakers ]
         )
 
 
@@ -1628,17 +1628,17 @@ continuationVoteButtons user continuationVotes =
         [ stayButton, abstainButton, moveOnButton ]
 
 
-speakerSectionView : Remote Login -> Remote UserNames -> Remote SpeakerList -> Html Msg
-speakerSectionView remoteLogin remoteUserNames remoteSpeakerList =
+speakerSectionView : Remote Login -> Remote SpeakerList -> Html Msg
+speakerSectionView remoteLogin remoteSpeakerList =
     Html.div
         [ css
             [ spaceChildren (Css.marginTop (rem 0.5))
             ]
         ]
-        (case ( remoteLogin, remoteUserNames, remoteSpeakerList ) of
-            ( Got login, Got userNames, Got speakerList ) ->
+        (case ( remoteLogin, remoteSpeakerList ) of
+            ( Got login, Got speakerList ) ->
                 [ heading 3 "Up next:"
-                , speakerListView login userNames speakerList
+                , speakerListView login speakerList
                 , Html.button
                     [ css [ buttonStyle ]
                     , onClick EnqueueClicked
@@ -1651,8 +1651,8 @@ speakerSectionView remoteLogin remoteUserNames remoteSpeakerList =
         )
 
 
-speakerListView : Login -> UserNames -> SpeakerList -> Html Msg
-speakerListView login userNames speakerList =
+speakerListView : Login -> SpeakerList -> Html Msg
+speakerListView login speakerList =
     let
         ( maybeFirst, followUpSpeakers ) =
             case speakerList of
@@ -1662,23 +1662,19 @@ speakerListView login userNames speakerList =
                 [] ->
                     ( Nothing, [] )
 
-        renderEntry ( speakerContributionId, userId ) =
-            Dict.get userId userNames
-                |> Maybe.map
-                    (\speakerName ->
-                        let
-                            currentUserId =
-                                getUserId login
+        renderEntry ( speakerContributionId, speaker ) =
+            let
+                currentUserId =
+                    getUserId login
 
-                            canModify =
-                                currentUserId == userId
-                        in
-                        Html.li []
-                            (speakerContributionView speakerName
-                                canModify
-                                speakerContributionId
-                            )
-                    )
+                canModify =
+                    currentUserId == speaker.userId
+            in
+            Html.li []
+                (speakerContributionView speaker.name
+                    canModify
+                    speakerContributionId
+                )
     in
     Html.details
         []
@@ -1692,7 +1688,7 @@ speakerListView login userNames speakerList =
                     ]
                 ]
                 [ maybeFirst
-                    |> Maybe.andThen renderEntry
+                    |> Maybe.map renderEntry
                     |> Maybe.withDefault (Html.text "No speakers yet.")
                 ]
             ]
@@ -1702,7 +1698,7 @@ speakerListView login userNames speakerList =
                 [ Css.margin zero
                 ]
             ]
-            (List.filterMap renderEntry followUpSpeakers)
+            (List.map renderEntry followUpSpeakers)
         ]
 
 

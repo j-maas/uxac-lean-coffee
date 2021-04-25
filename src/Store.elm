@@ -10,7 +10,7 @@ import Time
 type Store
     = Store
         { userNames : Remote UserNames
-        , speakers : Remote SpeakerList
+        , speakers : Remote DecodedSpeakerList
         }
 
 
@@ -67,12 +67,30 @@ type alias SpeakerContributionId =
 
 
 type alias Speaker =
-    UserId
+    { userId : UserId
+    , name : String
+    }
 
 
 getSpeakers : Store -> Remote SpeakerList
 getSpeakers (Store store) =
-    store.speakers
+    case ( store.userNames, store.speakers ) of
+        ( Got userNames, Got speakers ) ->
+            Got
+                (speakers
+                    -- TODO: Do not ignore nameless speakers, show them to the user.
+                    |> List.filterMap
+                        (\( contributionId, userId ) ->
+                            Dict.get userId userNames
+                                |> Maybe.map
+                                    (\name ->
+                                        ( contributionId, { userId = userId, name = name } )
+                                    )
+                        )
+                )
+
+        _ ->
+            Loading
 
 
 enqueue : Workspace -> TimestampField -> UserId -> Cmd msg
@@ -94,7 +112,11 @@ removeSpeakerContribution workspace speakerContributionId =
         ]
 
 
-speakersDecoder : Decoder SpeakerList
+type alias DecodedSpeakerList =
+    List ( SpeakerContributionId, UserId )
+
+
+speakersDecoder : Decoder DecodedSpeakerList
 speakersDecoder =
     Decode.list
         (Decode.map3
@@ -113,12 +135,7 @@ speakersDecoder =
         |> Decode.map
             (List.filterMap
                 (\( maybeEnqueued, speaker ) ->
-                    case maybeEnqueued of
-                        Just enqueued ->
-                            Just ( enqueued, speaker )
-
-                        Nothing ->
-                            Nothing
+                    Maybe.map (\enqueued -> ( enqueued, speaker )) maybeEnqueued
                 )
             )
         |> Decode.map (List.sortBy (\( enqueued, _ ) -> Time.posixToMillis enqueued))
@@ -139,7 +156,7 @@ init =
 
 type Msg
     = UsersReceived UserNames
-    | SpeakersReceived SpeakerList
+    | SpeakersReceived DecodedSpeakerList
 
 
 update : Msg -> Store -> Store
@@ -148,8 +165,8 @@ update msg (Store store) =
         UsersReceived users ->
             Store { store | userNames = Got users }
 
-        SpeakersReceived speakers ->
-            Store { store | speakers = Got speakers }
+        SpeakersReceived decodedSpeakers ->
+            Store { store | speakers = Got decodedSpeakers }
 
 
 dataField : String -> Decoder a -> Decoder a
