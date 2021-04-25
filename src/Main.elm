@@ -1346,7 +1346,7 @@ discussionView remoteLogin maybeDiscussedTopic continuationVotes times timerInpu
                )
             ++ remainingTime remoteLogin times timerInput
             :: continuationVote remoteLogin continuationVotes
-            ++ [ speakerListView remoteLogin remoteUserNames remoteSpeakers ]
+            ++ [ speakerSectionView remoteLogin remoteUserNames remoteSpeakers ]
         )
 
 
@@ -1628,33 +1628,17 @@ continuationVoteButtons user continuationVotes =
         [ stayButton, abstainButton, moveOnButton ]
 
 
-speakerListView : Remote Login -> Remote UserNames -> Remote SpeakerList -> Html Msg
-speakerListView remoteLogin remoteUserNames remoteSpeakerList =
-    Html.div []
+speakerSectionView : Remote Login -> Remote UserNames -> Remote SpeakerList -> Html Msg
+speakerSectionView remoteLogin remoteUserNames remoteSpeakerList =
+    Html.div
+        [ css
+            [ spaceChildren (Css.marginTop (rem 0.5))
+            ]
+        ]
         (case ( remoteLogin, remoteUserNames, remoteSpeakerList ) of
             ( Got login, Got userNames, Got speakerList ) ->
-                [ Html.ol []
-                    (List.filterMap
-                        (\( speakerContributionId, userId ) ->
-                            Dict.get userId userNames
-                                |> Maybe.map
-                                    (\speakerName ->
-                                        let
-                                            currentUserId =
-                                                getUserId login
-
-                                            canModify =
-                                                currentUserId == userId
-                                        in
-                                        Html.li []
-                                            (speakerContributionView speakerName
-                                                canModify
-                                                speakerContributionId
-                                            )
-                                    )
-                        )
-                        speakerList
-                    )
+                [ heading 3 "Up next:"
+                , speakerListView login userNames speakerList
                 , Html.button
                     [ css [ buttonStyle ]
                     , onClick EnqueueClicked
@@ -1665,6 +1649,61 @@ speakerListView remoteLogin remoteUserNames remoteSpeakerList =
             _ ->
                 [ text "Loading speaker list" ]
         )
+
+
+speakerListView : Login -> UserNames -> SpeakerList -> Html Msg
+speakerListView login userNames speakerList =
+    let
+        ( maybeFirst, followUpSpeakers ) =
+            case speakerList of
+                first :: rest_ ->
+                    ( Just first, rest_ )
+
+                [] ->
+                    ( Nothing, [] )
+
+        renderEntry ( speakerContributionId, userId ) =
+            Dict.get userId userNames
+                |> Maybe.map
+                    (\speakerName ->
+                        let
+                            currentUserId =
+                                getUserId login
+
+                            canModify =
+                                currentUserId == userId
+                        in
+                        Html.li []
+                            (speakerContributionView speakerName
+                                canModify
+                                speakerContributionId
+                            )
+                    )
+    in
+    Html.details
+        []
+        [ Html.summary []
+            [ Html.ol
+                [ css
+                    [ Css.display Css.inlineBlock
+                    , Css.margin zero
+                    , Css.padding zero
+                    , Css.listStyle Css.none
+                    ]
+                ]
+                [ maybeFirst
+                    |> Maybe.andThen renderEntry
+                    |> Maybe.withDefault (Html.text "No speakers yet.")
+                ]
+            ]
+        , Html.ol
+            [ Attributes.start 2
+            , css
+                [ Css.margin zero
+                ]
+            ]
+            (List.filterMap renderEntry followUpSpeakers)
+        ]
 
 
 speakerContributionView : String -> Bool -> SpeakerContributionId -> List (Html Msg)
