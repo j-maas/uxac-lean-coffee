@@ -1697,6 +1697,8 @@ speakerListView login speakerList =
                     [ Attributes.start 2
                     , css
                         [ Css.margin zero
+                        , Css.marginTop (rem 0.5)
+                        , spaceChildren (Css.marginTop (rem 0.5))
                         ]
                     ]
                     (List.map renderEntry followUpSpeakers)
