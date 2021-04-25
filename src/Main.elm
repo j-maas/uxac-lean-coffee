@@ -1676,30 +1676,34 @@ speakerListView login speakerList =
                     speakerContributionId
                 )
     in
-    Html.details
-        []
-        [ Html.summary []
-            [ Html.ol
-                [ css
-                    [ Css.display Css.inlineBlock
-                    , Css.margin zero
-                    , Css.padding zero
-                    , Css.listStyle Css.none
+    case maybeFirst of
+        Just first ->
+            Html.details
+                []
+                [ Html.summary []
+                    [ Html.ol
+                        [ css
+                            [ Css.display Css.inlineBlock
+                            , Css.margin zero
+                            , Css.padding zero
+                            , Css.listStyle Css.none
+                            ]
+                        ]
+                        [ renderEntry first
+                        ]
+                    , Html.text (" (then " ++ String.fromInt (List.length followUpSpeakers) ++ " more)")
                     ]
+                , Html.ol
+                    [ Attributes.start 2
+                    , css
+                        [ Css.margin zero
+                        ]
+                    ]
+                    (List.map renderEntry followUpSpeakers)
                 ]
-                [ maybeFirst
-                    |> Maybe.map renderEntry
-                    |> Maybe.withDefault (Html.text "No speakers yet.")
-                ]
-            ]
-        , Html.ol
-            [ Attributes.start 2
-            , css
-                [ Css.margin zero
-                ]
-            ]
-            (List.map renderEntry followUpSpeakers)
-        ]
+
+        Nothing ->
+            Html.text "No more speakers yet."
 
 
 speakerContributionView : String -> Bool -> SpeakerContributionId -> List (Html Msg)
@@ -1707,7 +1711,7 @@ speakerContributionView speakerName canModify speakerContributionId =
     text speakerName
         :: (if canModify then
                 [ Html.button
-                    [ css [ buttonStyle ]
+                    [ css [ buttonStyle, Css.marginLeft (rem 0.5) ]
                     , onClick (RemoveSpeakerContributionClicked speakerContributionId)
                     ]
                     [ text "Remove" ]
