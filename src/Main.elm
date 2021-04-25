@@ -1714,7 +1714,7 @@ speakerContributionView speakerName canModify speakerContributionId =
                     [ css [ buttonStyle, Css.marginLeft (rem 0.5) ]
                     , onClick (RemoveSpeakerContributionClicked speakerContributionId)
                     ]
-                    [ text "Remove" ]
+                    [ text "Unqueue" ]
                 ]
 
             else
