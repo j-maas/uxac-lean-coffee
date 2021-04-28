@@ -17,9 +17,11 @@ import Random
 import Remote exposing (Remote(..))
 import Set exposing (Set)
 import SortedDict exposing (SortedDict)
+import Speakers exposing (ContributionId, Speakers)
 import Store exposing (..)
 import Time
 import UUID
+import User exposing (UserId)
 
 
 main : Program Flags Model Msg
@@ -298,7 +300,7 @@ type Msg
     | UserNameChanged String
     | SaveUserNameClicked
     | EnqueueClicked
-    | RemoveSpeakerContributionClicked SpeakerContributionId
+    | RemoveSpeakerContributionClicked ContributionId
     | Tick Time.Posix
     | TimerInputChanged String
     | TimerStarted
@@ -1309,7 +1311,7 @@ discussionView :
     -> { b | now : Maybe Time.Posix, deadline : Maybe Time.Posix }
     -> String
     -> Remote UserNames
-    -> Remote SpeakerList
+    -> Remote Speakers
     -> Html Msg
 discussionView remoteLogin maybeDiscussedTopic continuationVotes times timerInput remoteUserNames remoteSpeakers =
     div
@@ -1628,7 +1630,7 @@ continuationVoteButtons user continuationVotes =
         [ stayButton, abstainButton, moveOnButton ]
 
 
-speakerSectionView : Remote Login -> Remote SpeakerList -> Html Msg
+speakerSectionView : Remote Login -> Remote Speakers -> Html Msg
 speakerSectionView remoteLogin remoteSpeakerList =
     Html.div
         [ css
@@ -1651,11 +1653,11 @@ speakerSectionView remoteLogin remoteSpeakerList =
         )
 
 
-speakerListView : Login -> SpeakerList -> Html Msg
-speakerListView login speakerList =
+speakerListView : Login -> Speakers -> Html Msg
+speakerListView login speakers =
     let
         ( maybeFirst, followUpSpeakers ) =
-            case speakerList of
+            case Speakers.followUpSpeakers speakers of
                 first :: rest_ ->
                     ( Just first, rest_ )
 
@@ -1708,7 +1710,7 @@ speakerListView login speakerList =
             Html.div [] [ Html.text "No more speakers yet." ]
 
 
-speakerContributionView : String -> Bool -> SpeakerContributionId -> List (Html Msg)
+speakerContributionView : String -> Bool -> ContributionId -> List (Html Msg)
 speakerContributionView speakerName canModify speakerContributionId =
     text speakerName
         :: (if canModify then

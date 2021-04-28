@@ -4,7 +4,9 @@ import Dict exposing (Dict)
 import Json.Decode as Decode exposing (Decoder)
 import Json.Encode as Encode
 import Remote exposing (Remote(..))
+import Speakers exposing (ContributionId, Speakers)
 import Time
+import User exposing (UserId)
 
 
 type Store
@@ -12,10 +14,6 @@ type Store
         { userNames : Remote UserNames
         , speakers : Remote DecodedSpeakerList
         }
-
-
-type alias UserId =
-    String
 
 
 
@@ -58,21 +56,7 @@ userNamesDecoder =
 -- Speakers
 
 
-type alias SpeakerList =
-    List ( SpeakerContributionId, Speaker )
-
-
-type alias SpeakerContributionId =
-    String
-
-
-type alias Speaker =
-    { userId : UserId
-    , name : String
-    }
-
-
-getSpeakers : Store -> Remote SpeakerList
+getSpeakers : Store -> Remote Speakers
 getSpeakers (Store store) =
     case ( store.userNames, store.speakers ) of
         ( Got userNames, Got speakers ) ->
@@ -87,6 +71,7 @@ getSpeakers (Store store) =
                                         ( contributionId, { userId = userId, name = name } )
                                     )
                         )
+                    |> Speakers.fromList
                 )
 
         _ ->
@@ -105,7 +90,7 @@ enqueue workspace timestamp userId =
         }
 
 
-removeSpeakerContribution : Workspace -> SpeakerContributionId -> Cmd msg
+removeSpeakerContribution : Workspace -> ContributionId -> Cmd msg
 removeSpeakerContribution workspace speakerContributionId =
     deleteDocs
         [ speakersCollectionPath workspace ++ [ speakerContributionId ]
@@ -113,7 +98,7 @@ removeSpeakerContribution workspace speakerContributionId =
 
 
 type alias DecodedSpeakerList =
-    List ( SpeakerContributionId, UserId )
+    List ( ContributionId, UserId )
 
 
 speakersDecoder : Decoder DecodedSpeakerList
