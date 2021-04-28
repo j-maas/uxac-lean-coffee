@@ -1641,8 +1641,7 @@ speakerSectionView remoteLogin remoteSpeakersStore =
             ( Got login, Got speakersStore ) ->
                 (case SpeakersStore.speakers speakersStore of
                     Just speakers ->
-                        [ div [] (activeSpeakerView speakers.activeSpeaker)
-                        , heading 3 "Up next:"
+                        [ div [] (activeSpeakerView login speakers.activeSpeaker)
                         , followUpSpeakersView login speakers.followUpSpeakers
                         ]
 
@@ -1661,9 +1660,16 @@ speakerSectionView remoteLogin remoteSpeakersStore =
         )
 
 
-activeSpeakerView : SpeakerEntry -> List (Html Msg)
-activeSpeakerView ( contributionId, speaker ) =
-    speakerContributionView speaker.name False contributionId
+activeSpeakerView : Login -> SpeakerEntry -> List (Html Msg)
+activeSpeakerView login ( contributionId, speaker ) =
+    let
+        currentUserId =
+            getUserId login
+
+        canModify =
+            currentUserId == speaker.userId
+    in
+    speakerContributionView speaker.name canModify contributionId
 
 
 followUpSpeakersView : Login -> SpeakerList -> Html Msg
@@ -1696,7 +1702,8 @@ followUpSpeakersView login followUpSpeakers =
             Html.details
                 []
                 [ Html.summary []
-                    [ Html.ol
+                    ([ Html.text "Up next: "
+                     , Html.ol
                         [ css
                             [ Css.display Css.inlineBlock
                             , Css.margin zero
@@ -1706,8 +1713,19 @@ followUpSpeakersView login followUpSpeakers =
                         ]
                         [ renderEntry first
                         ]
-                    , Html.text (" (then " ++ String.fromInt (List.length followUpSpeakers) ++ " more)")
-                    ]
+                     ]
+                        ++ (let
+                                restCount =
+                                    List.length rest
+                            in
+                            if restCount > 0 then
+                                [ Html.text (" (then " ++ String.fromInt (List.length rest) ++ " more)")
+                                ]
+
+                            else
+                                []
+                           )
+                    )
                 , Html.ol
                     [ Attributes.start 2
                     , css
