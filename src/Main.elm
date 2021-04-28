@@ -860,7 +860,6 @@ view model =
                     continuationVotes
                     model
                     model.timerInput
-                    (Store.getUserNames model.store)
                     (Store.getSpeakers model.store)
                 :: discussedTopics model.user discussedList
                 ++ [ topicEntry model.user model.newTopicInput ]
@@ -1310,10 +1309,9 @@ discussionView :
     -> Maybe (List ContinuationVote)
     -> { b | now : Maybe Time.Posix, deadline : Maybe Time.Posix }
     -> String
-    -> Remote UserNames
     -> Remote SpeakersStore
     -> Html Msg
-discussionView remoteLogin maybeDiscussedTopic continuationVotes times timerInput remoteUserNames remoteSpeakers =
+discussionView remoteLogin maybeDiscussedTopic continuationVotes times timerInput remoteSpeakers =
     div
         [ css
             [ borderRadius
