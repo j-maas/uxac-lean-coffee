@@ -1705,7 +1705,7 @@ speakerListView login speakerList =
                 ]
 
         Nothing ->
-            Html.text "No more speakers yet."
+            Html.div [] [ Html.text "No more speakers yet." ]
 
 
 speakerContributionView : String -> Bool -> SpeakerContributionId -> List (Html Msg)
