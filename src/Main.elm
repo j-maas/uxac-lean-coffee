@@ -17,7 +17,7 @@ import Random
 import Remote exposing (Remote(..))
 import Set exposing (Set)
 import SortedDict exposing (SortedDict)
-import Speakers exposing (ContributionId, Speakers)
+import SpeakersStore exposing (ContributionId, SpeakerEntry, SpeakerList, SpeakersStore)
 import Store exposing (..)
 import Time
 import UUID
@@ -1311,7 +1311,7 @@ discussionView :
     -> { b | now : Maybe Time.Posix, deadline : Maybe Time.Posix }
     -> String
     -> Remote UserNames
-    -> Remote Speakers
+    -> Remote SpeakersStore
     -> Html Msg
 discussionView remoteLogin maybeDiscussedTopic continuationVotes times timerInput remoteUserNames remoteSpeakers =
     div
@@ -1630,34 +1630,47 @@ continuationVoteButtons user continuationVotes =
         [ stayButton, abstainButton, moveOnButton ]
 
 
-speakerSectionView : Remote Login -> Remote Speakers -> Html Msg
-speakerSectionView remoteLogin remoteSpeakerList =
+speakerSectionView : Remote Login -> Remote SpeakersStore -> Html Msg
+speakerSectionView remoteLogin remoteSpeakersStore =
     Html.div
         [ css
             [ spaceChildren (Css.marginTop (rem 0.5))
             ]
         ]
-        (case ( remoteLogin, remoteSpeakerList ) of
-            ( Got login, Got speakerList ) ->
-                [ heading 3 "Up next:"
-                , speakerListView login speakerList
-                , Html.button
-                    [ css [ buttonStyle ]
-                    , onClick EnqueueClicked
-                    ]
-                    [ text "Enqueue" ]
-                ]
+        (case ( remoteLogin, remoteSpeakersStore ) of
+            ( Got login, Got speakersStore ) ->
+                (case SpeakersStore.speakers speakersStore of
+                    Just speakers ->
+                        [ div [] (activeSpeakerView speakers.activeSpeaker)
+                        , heading 3 "Up next:"
+                        , followUpSpeakersView login speakers.followUpSpeakers
+                        ]
+
+                    Nothing ->
+                        [ div [] [ text "No speakers in queue yet." ] ]
+                )
+                    ++ [ Html.button
+                            [ css [ buttonStyle ]
+                            , onClick EnqueueClicked
+                            ]
+                            [ text "Enqueue" ]
+                       ]
 
             _ ->
-                [ text "Loading speaker list" ]
+                [ text "Loading speaker list…" ]
         )
 
 
-speakerListView : Login -> Speakers -> Html Msg
-speakerListView login speakers =
+activeSpeakerView : SpeakerEntry -> List (Html Msg)
+activeSpeakerView ( contributionId, speaker ) =
+    speakerContributionView speaker.name False contributionId
+
+
+followUpSpeakersView : Login -> SpeakerList -> Html Msg
+followUpSpeakersView login followUpSpeakers =
     let
-        ( maybeFirst, followUpSpeakers ) =
-            case Speakers.followUpSpeakers speakers of
+        ( maybeFirst, rest ) =
+            case followUpSpeakers of
                 first :: rest_ ->
                     ( Just first, rest_ )
 

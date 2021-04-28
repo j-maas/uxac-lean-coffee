@@ -4,7 +4,7 @@ import Dict exposing (Dict)
 import Json.Decode as Decode exposing (Decoder)
 import Json.Encode as Encode
 import Remote exposing (Remote(..))
-import Speakers exposing (ContributionId, Speakers)
+import SpeakersStore exposing (ContributionId, SpeakersStore)
 import Time
 import User exposing (UserId)
 
@@ -56,7 +56,7 @@ userNamesDecoder =
 -- Speakers
 
 
-getSpeakers : Store -> Remote Speakers
+getSpeakers : Store -> Remote SpeakersStore
 getSpeakers (Store store) =
     case ( store.userNames, store.speakers ) of
         ( Got userNames, Got speakers ) ->
@@ -71,7 +71,7 @@ getSpeakers (Store store) =
                                         ( contributionId, { userId = userId, name = name } )
                                     )
                         )
-                    |> Speakers.fromList
+                    |> SpeakersStore.fromList
                 )
 
         _ ->
