@@ -4,7 +4,7 @@ import Dict exposing (Dict)
 import Json.Decode as Decode exposing (Decoder)
 import Json.Encode as Encode
 import Remote exposing (Remote(..))
-import SpeakersStore exposing (ContributionId, SpeakersStore)
+import SpeakersStore exposing (ContributionId, SpeakerList, SpeakersStore)
 import Time
 import User exposing (UserId)
 
@@ -13,6 +13,7 @@ type Store
     = Store
         { userNames : Remote UserNames
         , speakers : Remote DecodedSpeakerList
+        , questions : Remote DecodedSpeakerList
         }
 
 
@@ -58,42 +59,60 @@ userNamesDecoder =
 
 getSpeakers : Store -> Remote SpeakersStore
 getSpeakers (Store store) =
-    case ( store.userNames, store.speakers ) of
-        ( Got userNames, Got speakers ) ->
+    case ( store.userNames, store.speakers, store.questions ) of
+        ( Got userNames, Got rawSpeakers, Got rawQuestions ) ->
             Got
-                (speakers
-                    -- TODO: Do not ignore nameless speakers, show them to the user.
-                    |> List.filterMap
-                        (\( contributionId, userId ) ->
-                            Dict.get userId userNames
-                                |> Maybe.map
-                                    (\name ->
-                                        ( contributionId, { userId = userId, name = name } )
-                                    )
-                        )
-                    |> SpeakersStore.fromList
+                (SpeakersStore.init
+                    { speakers = mapToSpeakerList userNames rawSpeakers
+                    , questions = mapToSpeakerList userNames rawQuestions
+                    }
                 )
 
         _ ->
             Loading
 
 
+mapToSpeakerList : UserNames -> DecodedSpeakerList -> SpeakerList
+mapToSpeakerList userNames rawSpeakers =
+    rawSpeakers
+        -- TODO: Do not ignore nameless speakers, show them to the user.
+        |> List.filterMap
+            (\( contributionId, userId ) ->
+                Dict.get userId userNames
+                    |> Maybe.map
+                        (\name ->
+                            ( contributionId, { userId = userId, name = name } )
+                        )
+            )
+
+
 enqueue : Workspace -> TimestampField -> UserId -> Cmd msg
 enqueue workspace timestamp userId =
     insertDoc
-        { collectionPath = speakersCollectionPath workspace
-        , doc =
-            Encode.object
-                [ ( "userId", Encode.string userId )
-                , ( "whenEnqueued", timestamp )
-                ]
+        { collectionPath = speakerCollectionPath workspace
+        , doc = speakerEncoder timestamp userId
         }
 
 
 removeSpeakerContribution : Workspace -> ContributionId -> Cmd msg
 removeSpeakerContribution workspace speakerContributionId =
     deleteDocs
-        [ speakersCollectionPath workspace ++ [ speakerContributionId ]
+        [ speakerCollectionPath workspace ++ [ speakerContributionId ]
+        ]
+
+
+ask : Workspace -> TimestampField -> UserId -> Cmd msg
+ask workspace timestamp userId =
+    insertDoc
+        { collectionPath = questionCollectionPath workspace
+        , doc = speakerEncoder timestamp userId
+        }
+
+
+removeQuestion : Workspace -> ContributionId -> Cmd msg
+removeQuestion workspace speakerContributionId =
+    deleteDocs
+        [ questionCollectionPath workspace ++ [ speakerContributionId ]
         ]
 
 
@@ -101,26 +120,34 @@ type alias DecodedSpeakerList =
     List ( ContributionId, UserId )
 
 
+speakerEncoder : TimestampField -> UserId -> Encode.Value
+speakerEncoder timestamp userId =
+    Encode.object
+        [ ( "userId", Encode.string userId )
+        , ( "createdAt", timestamp )
+        ]
+
+
 speakersDecoder : Decoder DecodedSpeakerList
 speakersDecoder =
     Decode.list
         (Decode.map3
-            (\speakerContributionId userId maybeEnqueued ->
-                ( maybeEnqueued
+            (\speakerContributionId userId maybeCreatedAt ->
+                ( maybeCreatedAt
                 , ( speakerContributionId, userId )
                 )
             )
             (Decode.field "id" Decode.string)
             (dataField "userId" Decode.string)
-            (dataField "whenEnqueued" (Decode.maybe timestampDecoder))
+            (dataField "createdAt" (Decode.maybe timestampDecoder))
         )
         {- Firestore updates the collection locally, but the timestamp is null until the server responds.
            We ignore such entries until they are available with a timestamp.
         -}
         |> Decode.map
             (List.filterMap
-                (\( maybeEnqueued, speaker ) ->
-                    Maybe.map (\enqueued -> ( enqueued, speaker )) maybeEnqueued
+                (\( maybeCreatedAt, speaker ) ->
+                    Maybe.map (\enqueued -> ( enqueued, speaker )) maybeCreatedAt
                 )
             )
         |> Decode.map (List.sortBy (\( enqueued, _ ) -> Time.posixToMillis enqueued))
@@ -136,12 +163,14 @@ init =
     Store
         { userNames = Loading
         , speakers = Loading
+        , questions = Loading
         }
 
 
 type Msg
     = UsersReceived UserNames
     | SpeakersReceived DecodedSpeakerList
+    | QuestionsReceived DecodedSpeakerList
 
 
 update : Msg -> Store -> Store
@@ -152,6 +181,9 @@ update msg (Store store) =
 
         SpeakersReceived decodedSpeakers ->
             Store { store | speakers = Got decodedSpeakers }
+
+        QuestionsReceived decodedAskers ->
+            Store { store | questions = Got decodedAskers }
 
 
 dataField : String -> Decoder a -> Decoder a
@@ -191,9 +223,15 @@ usersCollectionPath workspace =
         |> prependWorkspace workspace
 
 
-speakersCollectionPath : Workspace -> Path
-speakersCollectionPath workspace =
+speakerCollectionPath : Workspace -> Path
+speakerCollectionPath workspace =
     [ "speakers" ]
+        |> prependWorkspace workspace
+
+
+questionCollectionPath : Workspace -> Path
+questionCollectionPath workspace =
+    [ "questions" ]
         |> prependWorkspace workspace
 
 

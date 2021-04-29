@@ -17,7 +17,7 @@ import Random
 import Remote exposing (Remote(..))
 import Set exposing (Set)
 import SortedDict exposing (SortedDict)
-import SpeakersStore exposing (ContributionId, SpeakerEntry, SpeakerList, SpeakersStore)
+import SpeakersStore exposing (ActiveSpeaker, ContributionId, SpeakerList, SpeakersStore)
 import Store exposing (..)
 import Time
 import UUID
@@ -300,7 +300,9 @@ type Msg
     | UserNameChanged String
     | SaveUserNameClicked
     | EnqueueClicked
-    | RemoveSpeakerContributionClicked ContributionId
+    | UnqueueClicked ContributionId
+    | AskQuestionClicked
+    | QuestionDoneClicked ContributionId
     | Tick Time.Posix
     | TimerInputChanged String
     | TimerStarted
@@ -566,8 +568,19 @@ update msg model =
                 Loading ->
                     ( model, Cmd.none )
 
-        RemoveSpeakerContributionClicked speakerContributionId ->
+        UnqueueClicked speakerContributionId ->
             ( model, Store.removeSpeakerContribution model.workspace speakerContributionId )
+
+        AskQuestionClicked ->
+            case model.user of
+                Got user ->
+                    ( model, Store.ask model.workspace model.timestampField (getUserId user) )
+
+                Loading ->
+                    ( model, Cmd.none )
+
+        QuestionDoneClicked questionId ->
+            ( model, Store.removeQuestion model.workspace questionId )
 
         Tick now ->
             ( { model | now = Just now }, Cmd.none )
@@ -1658,16 +1671,32 @@ speakerSectionView remoteLogin remoteSpeakersStore =
         )
 
 
-activeSpeakerView : Login -> SpeakerEntry -> List (Html Msg)
-activeSpeakerView login ( contributionId, speaker ) =
+activeSpeakerView : Login -> ActiveSpeaker -> List (Html Msg)
+activeSpeakerView login active =
     let
+        ( activeContributionId, activeSpeaker ) =
+            active.speaker
+
         currentUserId =
             getUserId login
 
-        canModify =
-            currentUserId == speaker.userId
+        canModify speaker_ =
+            currentUserId == speaker_.userId
     in
-    speakerContributionView speaker.name canModify contributionId
+    speakerContributionView (canModify activeSpeaker)
+        (UnqueueClicked activeContributionId)
+        "Done"
+        activeSpeaker.name
+        ++ [ Html.ol []
+                (List.map
+                    (\( questionId, asker ) ->
+                        Html.li []
+                            (speakerContributionView (canModify asker) (QuestionDoneClicked questionId) "Done" asker.name)
+                    )
+                    active.questions
+                )
+           , Html.button [ css [ buttonStyle ], onClick AskQuestionClicked ] [ Html.text "Ask" ]
+           ]
 
 
 followUpSpeakersView : Login -> SpeakerList -> Html Msg
@@ -1681,7 +1710,7 @@ followUpSpeakersView login followUpSpeakers =
                 [] ->
                     ( Nothing, [] )
 
-        renderEntry ( speakerContributionId, speaker ) =
+        renderEntry ( contributionId, speaker ) =
             let
                 currentUserId =
                     getUserId login
@@ -1690,9 +1719,11 @@ followUpSpeakersView login followUpSpeakers =
                     currentUserId == speaker.userId
             in
             Html.li []
-                (speakerContributionView speaker.name
+                (speakerContributionView
                     canModify
-                    speakerContributionId
+                    (UnqueueClicked contributionId)
+                    "Unqueue"
+                    speaker.name
                 )
     in
     case maybeFirst of
@@ -1739,15 +1770,15 @@ followUpSpeakersView login followUpSpeakers =
             Html.div [] [ Html.text "No more speakers yet." ]
 
 
-speakerContributionView : String -> Bool -> ContributionId -> List (Html Msg)
-speakerContributionView speakerName canModify speakerContributionId =
+speakerContributionView : Bool -> Msg -> String -> String -> List (Html Msg)
+speakerContributionView canModify msg label speakerName =
     text speakerName
         :: (if canModify then
                 [ Html.button
                     [ css [ buttonStyle, Css.marginLeft (rem 0.5) ]
-                    , onClick (RemoveSpeakerContributionClicked speakerContributionId)
+                    , onClick msg
                     ]
-                    [ text "Unqueue" ]
+                    [ text label ]
                 ]
 
             else
@@ -2455,7 +2486,8 @@ firestoreSubscriptionsCmd workspace =
         , subscribe { kind = Collection, path = discussedCollectionPath workspace, tag = DiscussedTag }
         , subscribe { kind = Doc, path = discussionDeadlineDocPath workspace, tag = DeadlineTag }
         , subscribe { kind = Collection, path = usersCollectionPath workspace, tag = UserNamesTag }
-        , subscribe { kind = Collection, path = speakersCollectionPath workspace, tag = SpeakersTag }
+        , subscribe { kind = Collection, path = speakerCollectionPath workspace, tag = SpeakersTag }
+        , subscribe { kind = Collection, path = questionCollectionPath workspace, tag = QuestionsTag }
         ]
 
 
@@ -2517,6 +2549,7 @@ type SubscriptionTag
     | DeadlineTag
     | UserNamesTag
     | SpeakersTag
+    | QuestionsTag
 
 
 encodeSubscriptionTag : SubscriptionTag -> Encode.Value
@@ -2550,6 +2583,9 @@ encodeSubscriptionTag tag =
 
                 SpeakersTag ->
                     "speakers"
+
+                QuestionsTag ->
+                    "questions"
     in
     Encode.string raw
 
@@ -2586,6 +2622,9 @@ subscriptionTagDecoder =
 
                     "speakers" ->
                         Decode.succeed SpeakersTag
+
+                    "questions" ->
+                        Decode.succeed QuestionsTag
 
                     _ ->
                         Decode.fail "Invalid subscription kind"
@@ -2647,6 +2686,10 @@ parseFirestoreSubscription value =
                                         SpeakersTag ->
                                             speakersDecoder
                                                 |> Decode.map (\speakers -> StoreMsg <| SpeakersReceived speakers)
+
+                                        QuestionsTag ->
+                                            speakersDecoder
+                                                |> Decode.map (\askers -> StoreMsg <| QuestionsReceived askers)
                             in
                             Decode.field "data" dataDecoder
                         )

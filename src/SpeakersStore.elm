@@ -1,10 +1,13 @@
-module SpeakersStore exposing (ContributionId, Speaker, SpeakerEntry, SpeakerList, SpeakersStore, fromList, speakers)
+module SpeakersStore exposing (ActiveSpeaker, ContributionId, Speaker, SpeakerEntry, SpeakerList, SpeakersStore, init, speakers)
 
 import User exposing (UserId)
 
 
 type SpeakersStore
-    = SpeakersStore SpeakerList
+    = SpeakersStore
+        { speakers : SpeakerList
+        , questions : SpeakerList
+        }
 
 
 type alias SpeakerList =
@@ -25,23 +28,32 @@ type alias Speaker =
     }
 
 
-fromList : SpeakerList -> SpeakersStore
-fromList list =
-    SpeakersStore list
+init : { speakers : SpeakerList, questions : SpeakerList } -> SpeakersStore
+init lists =
+    SpeakersStore lists
 
 
 type alias Speakers =
-    { activeSpeaker : SpeakerEntry
+    { activeSpeaker : ActiveSpeaker
     , followUpSpeakers : SpeakerList
+    }
+
+
+type alias ActiveSpeaker =
+    { speaker : SpeakerEntry
+    , questions : SpeakerList
     }
 
 
 speakers : SpeakersStore -> Maybe Speakers
 speakers (SpeakersStore list) =
-    case list of
+    case list.speakers of
         active :: followUps ->
             Just
-                { activeSpeaker = active
+                { activeSpeaker =
+                    { speaker = active
+                    , questions = list.questions
+                    }
                 , followUpSpeakers = followUps
                 }
 
