@@ -1059,12 +1059,18 @@ settingsView styles model remoteUsers =
         ]
         (heading 2 "Settings"
             :: (case ( model.user, remoteUsers ) of
-                    ( Got (AnonymousUser id), Got users ) ->
-                        [ section
+                    ( Got user, Got users ) ->
+                        let
+                            id =
+                                getUserId user
+                        in
+                        section
                             [ heading 3 "Your name"
                             , userNameInputView (getUserNameInput model.userNameInput id users)
                             ]
-                        , section
+                            :: (case user of
+                                    AnonymousUser _ ->
+                                        [ section
                             [ heading 3 "Login"
                             , Html.p [] [ text ("Logged in anonymously as " ++ id ++ ".") ]
                             , Html.button
@@ -1075,10 +1081,10 @@ settingsView styles model remoteUsers =
                             ]
                         ]
 
-                    ( Got (GoogleUser user), _ ) ->
+                                    GoogleUser googleUser ->
                         let
                             settings =
-                                if Remote.toMaybe user.isAdmin |> Maybe.withDefault False then
+                                                if Remote.toMaybe googleUser.isAdmin |> Maybe.withDefault False then
                                     if isAdminActiveForUser model.user then
                                         [ Html.button [ css [ buttonStyle ], onClick (SetAdmin False) ] [ text "Deactivate admin" ] ]
 
@@ -1112,12 +1118,13 @@ settingsView styles model remoteUsers =
                                     , spaceChildrenAndP (Css.marginTop (rem 0.5))
                                     ]
                                 ]
-                                [ Html.p [] [ text ("Logged in via Google as " ++ user.email ++ ".") ]
+                                                [ Html.p [] [ text ("Logged in via Google as " ++ googleUser.email ++ ".") ]
                                 , logOutButton
                                 ]
                                 :: settings
                             )
                         ]
+                               )
 
                     _ ->
                         [ Html.p [] [ text "Connecting…" ] ]
