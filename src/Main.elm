@@ -1071,59 +1071,59 @@ settingsView styles model remoteUsers =
                             :: (case user of
                                     AnonymousUser _ ->
                                         [ section
-                            [ heading 3 "Login"
-                            , Html.p [] [ text ("Logged in anonymously as " ++ id ++ ".") ]
-                            , Html.button
-                                [ css [ buttonStyle ]
-                                , onClick LogInWithGoogleClicked
-                                ]
-                                [ text "Log in via Google" ]
-                            ]
-                        ]
+                                            [ heading 3 "Login"
+                                            , Html.p [] [ text ("Logged in anonymously as " ++ id ++ ".") ]
+                                            , Html.button
+                                                [ css [ buttonStyle ]
+                                                , onClick LogInWithGoogleClicked
+                                                ]
+                                                [ text "Log in via Google" ]
+                                            ]
+                                        ]
 
                                     GoogleUser googleUser ->
-                        let
-                            settings =
+                                        let
+                                            settings =
                                                 if Remote.toMaybe googleUser.isAdmin |> Maybe.withDefault False then
-                                    if isAdminActiveForUser model.user then
-                                        [ Html.button [ css [ buttonStyle ], onClick (SetAdmin False) ] [ text "Deactivate admin" ] ]
+                                                    if isAdminActiveForUser model.user then
+                                                        [ Html.button [ css [ buttonStyle ], onClick (SetAdmin False) ] [ text "Deactivate admin" ] ]
 
-                                    else
-                                        [ Html.button [ css [ buttonStyle ], onClick (SetAdmin True) ] [ text "Activate admin" ] ]
+                                                    else
+                                                        [ Html.button [ css [ buttonStyle ], onClick (SetAdmin True) ] [ text "Activate admin" ] ]
 
-                                else
-                                    [ Html.p [ css [ Css.fontStyle Css.italic ] ]
-                                        [ text "You do not have moderator rights, so you cannot activate the moderator tools." ]
-                                    , Html.p [ css [ Css.fontStyle Css.italic ] ]
-                                        [ text "If you would like to become a moderator, ask someone who manages this app to add you to the list of moderators and tell them the email address you are logged in with."
-                                        ]
-                                    ]
+                                                else
+                                                    [ Html.p [ css [ Css.fontStyle Css.italic ] ]
+                                                        [ text "You do not have moderator rights, so you cannot activate the moderator tools." ]
+                                                    , Html.p [ css [ Css.fontStyle Css.italic ] ]
+                                                        [ text "If you would like to become a moderator, ask someone who manages this app to add you to the list of moderators and tell them the email address you are logged in with."
+                                                        ]
+                                                    ]
 
-                            logOutButton =
-                                Html.button [ css [ buttonStyle ], onClick LogOutClicked ] [ text "Log out" ]
-                        in
-                        [ Html.div
-                            [ css
-                                [ Css.displayFlex
-                                , Css.flexDirection Css.column
-                                , Css.alignItems Css.start
-                                , spaceChildrenAndP (Css.marginTop (rem 2))
-                                ]
-                            ]
-                            (div
-                                [ css
-                                    [ Css.displayFlex
-                                    , Css.flexDirection Css.column
-                                    , Css.alignItems Css.start
-                                    , spaceChildrenAndP (Css.marginTop (rem 0.5))
-                                    ]
-                                ]
+                                            logOutButton =
+                                                Html.button [ css [ buttonStyle ], onClick LogOutClicked ] [ text "Log out" ]
+                                        in
+                                        [ Html.div
+                                            [ css
+                                                [ Css.displayFlex
+                                                , Css.flexDirection Css.column
+                                                , Css.alignItems Css.start
+                                                , spaceChildrenAndP (Css.marginTop (rem 2))
+                                                ]
+                                            ]
+                                            (div
+                                                [ css
+                                                    [ Css.displayFlex
+                                                    , Css.flexDirection Css.column
+                                                    , Css.alignItems Css.start
+                                                    , spaceChildrenAndP (Css.marginTop (rem 0.5))
+                                                    ]
+                                                ]
                                                 [ Html.p [] [ text ("Logged in via Google as " ++ googleUser.email ++ ".") ]
-                                , logOutButton
-                                ]
-                                :: settings
-                            )
-                        ]
+                                                , logOutButton
+                                                ]
+                                                :: settings
+                                            )
+                                        ]
                                )
 
                     _ ->
@@ -1688,9 +1688,11 @@ activeSpeakerView login active =
             getUserId login
 
         canModify speaker_ =
-            currentUserId == speaker_.userId
+            currentUserId
+                == speaker_.userId
+                || isAdminActiveForUser (Got login)
     in
-    speakerContributionView (canModify activeSpeaker)
+    speakerContributionView (canModify activeSpeaker && List.isEmpty active.questions)
         (UnqueueClicked activeContributionId)
         "Done"
         activeSpeaker.name
