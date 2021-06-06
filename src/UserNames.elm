@@ -1,15 +1,20 @@
-module UserNames exposing (UserId, Store, UserNames, loading, setUserName, userNamesDecoder, usersCollectionPath)
+module UserNames exposing (Store, UserId, UserNames, loading, setUserName, userNamesDecoder, usersCollectionPath)
 
-import Store 
 import Dict exposing (Dict)
-import Json.Encode as Encode
 import Json.Decode as Decode exposing (Decoder)
+import Json.Encode as Encode
 import Remote exposing (Remote(..))
+import Store
 
-type alias Store = (Remote UserNames)
+
+type alias Store =
+    Remote UserNames
+
 
 loading : Store
-loading = Loading
+loading =
+    Loading
+
 
 type alias UserId =
     String
@@ -17,7 +22,6 @@ type alias UserId =
 
 type alias UserNames =
     Dict UserId String
-
 
 
 setUserName : Store.Workspace -> UserId -> String -> Cmd msg
@@ -41,6 +45,7 @@ userNamesDecoder =
             (Store.dataField "name" Decode.string)
         )
         |> Decode.map Dict.fromList
+
 
 usersCollectionPath : Store.Workspace -> Store.Path
 usersCollectionPath workspace =

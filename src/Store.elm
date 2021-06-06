@@ -5,6 +5,7 @@ import Json.Encode as Encode
 import Remote exposing (Remote(..))
 import Time
 
+
 dataField : String -> Decoder a -> Decoder a
 dataField field decoder =
     Decode.field "data" (Decode.field field decoder)
@@ -30,8 +31,6 @@ timestampDecoder =
         )
         (Decode.field "seconds" Decode.int)
         (Decode.field "nanoseconds" Decode.int)
-
-
 
 
 type alias Workspace =

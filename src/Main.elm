@@ -17,7 +17,7 @@ import Random
 import Remote exposing (Remote(..))
 import Set exposing (Set)
 import SortedDict exposing (SortedDict)
-import Speakers exposing (ActiveSpeaker, Speakers, ContributionId, SpeakerList)
+import Speakers exposing (ActiveSpeaker, ContributionId, SpeakerList, Speakers)
 import Store exposing (..)
 import Time
 import UUID
@@ -308,7 +308,7 @@ type Msg
     | TimerInputChanged String
     | TimerStarted
     | TimerCleared
-    -- Stores
+      -- Stores
     | UsersReceived UserNames
     | SpeakersReceived Speakers.DecodedSpeakerList
     | QuestionsReceived Speakers.DecodedSpeakerList
@@ -390,7 +390,6 @@ update msg model =
 
         DeadlineReceived deadline ->
             ( { model | deadline = deadline }, Cmd.none )
-
 
         ErrorReceived result ->
             case result of
@@ -626,12 +625,13 @@ update msg model =
             ( model, clearDeadline model.workspace )
 
         UsersReceived newUsers ->
-            ({model | userNames = Got newUsers}, Cmd.none)
+            ( { model | userNames = Got newUsers }, Cmd.none )
 
         SpeakersReceived newSpeakers ->
-            ({model | speakers = Speakers.receivedSpeakers newSpeakers model.speakers}, Cmd.none)
+            ( { model | speakers = Speakers.receivedSpeakers newSpeakers model.speakers }, Cmd.none )
+
         QuestionsReceived newQuestions ->
-            ({model | speakers = Speakers.receivedQuestions newQuestions model.speakers},Cmd.none)
+            ( { model | speakers = Speakers.receivedQuestions newQuestions model.speakers }, Cmd.none )
 
 
 processParsingError : Decode.Error -> Error
@@ -876,7 +876,7 @@ view model =
                 [ logo
                 , h1 [ css [ Css.margin zero ] ] [ text headingText ]
                 ]
-             , settingsContainerView model.user model.userNameInput (model.userNames)
+             , settingsContainerView model.user model.userNameInput model.userNames
              ]
                 ++ errorView model.error
                 ++ discussionView model.user
@@ -1660,13 +1660,13 @@ continuationVoteButtons user continuationVotes =
 
 
 speakerSectionView : Remote Login -> Remote (Maybe Speakers) -> Html Msg
-speakerSectionView remoteLogin remoteSpeakers=
+speakerSectionView remoteLogin remoteSpeakers =
     Html.div
         [ css
             [ spaceChildren (Css.marginTop (rem 0.5))
             ]
         ]
-        (case ( remoteLogin, remoteSpeakers) of
+        (case ( remoteLogin, remoteSpeakers ) of
             ( Got login, Got maybeSpeakers ) ->
                 (case maybeSpeakers of
                     Just speakers ->
@@ -2705,11 +2705,11 @@ parseFirestoreSubscription value =
 
                                         SpeakersTag ->
                                             Speakers.speakersDecoder
-                                                |> Decode.map SpeakersReceived 
+                                                |> Decode.map SpeakersReceived
 
                                         QuestionsTag ->
                                             Speakers.speakersDecoder
-                                                |> Decode.map QuestionsReceived 
+                                                |> Decode.map QuestionsReceived
                             in
                             Decode.field "data" dataDecoder
                         )

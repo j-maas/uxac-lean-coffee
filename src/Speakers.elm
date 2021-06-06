@@ -1,12 +1,13 @@
-module Speakers exposing (ActiveSpeaker, ContributionId, Speaker, SpeakerEntry, SpeakerList, Store, get, loading, enqueue, removeSpeakerContribution, ask, removeQuestion, speakersDecoder, speakerCollectionPath, questionCollectionPath, receivedSpeakers, receivedQuestions, DecodedSpeakerList, Speakers)
+module Speakers exposing (ActiveSpeaker, ContributionId, DecodedSpeakerList, Speaker, SpeakerEntry, SpeakerList, Speakers, Store, ask, enqueue, get, loading, questionCollectionPath, receivedQuestions, receivedSpeakers, removeQuestion, removeSpeakerContribution, speakerCollectionPath, speakersDecoder)
 
-import UserNames exposing (UserId)
-import Time
-import Json.Encode as Encode
 import Dict
 import Json.Decode as Decode exposing (Decoder)
+import Json.Encode as Encode
 import Remote exposing (Remote(..))
 import Store
+import Time
+import UserNames exposing (UserId)
+
 
 type Store
     = Store
@@ -14,22 +15,30 @@ type Store
         , questions : Remote DecodedSpeakerList
         }
 
+
 loading : Store
 loading =
-    Store {speakers = Loading,
-    questions = Loading}
+    Store
+        { speakers = Loading
+        , questions = Loading
+        }
+
 
 receivedSpeakers : DecodedSpeakerList -> Store -> Store
 receivedSpeakers newSpeakers (Store store) =
-    Store {
-        store | speakers = Got newSpeakers
-    }
+    Store
+        { store
+            | speakers = Got newSpeakers
+        }
+
 
 receivedQuestions : DecodedSpeakerList -> Store -> Store
 receivedQuestions newQuestions (Store store) =
-    Store {
-        store | questions = Got newQuestions
-    }
+    Store
+        { store
+            | questions = Got newQuestions
+        }
+
 
 type alias SpeakerList =
     List SpeakerEntry
@@ -61,17 +70,19 @@ type alias ActiveSpeaker =
     }
 
 
-
 get : UserNames.Store -> Store -> Remote (Maybe Speakers)
 get userStore (Store store) =
     case ( userStore, store.speakers, store.questions ) of
         ( Got userNames, Got rawSpeakers, Got rawQuestions ) ->
             Got
-                (let speakers = mapToSpeakerList userNames rawSpeakers
-                     questions = mapToSpeakerList userNames rawQuestions
-                in
+                (let
+                    speakers =
+                        mapToSpeakerList userNames rawSpeakers
 
-                case speakers of
+                    questions =
+                        mapToSpeakerList userNames rawQuestions
+                 in
+                 case speakers of
                     active :: followUps ->
                         Just
                             { activeSpeaker =
@@ -87,7 +98,6 @@ get userStore (Store store) =
 
         _ ->
             Loading
-
 
 
 mapToSpeakerList : UserNames.UserNames -> DecodedSpeakerList -> SpeakerList
@@ -170,7 +180,6 @@ speakersDecoder =
             )
         |> Decode.map (List.sortBy (\( enqueued, _ ) -> Time.posixToMillis enqueued))
         |> Decode.map (List.map Tuple.second)
-
 
 
 speakerCollectionPath : Store.Workspace -> Store.Path
