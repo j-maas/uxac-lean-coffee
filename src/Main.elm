@@ -1722,8 +1722,12 @@ currentSpeakerView login current =
 followUpSpeakersView : Login -> SpeakerList -> Html Msg
 followUpSpeakersView login followUpSpeakers =
     let
+        -- TODO: Add a loading indicator for queueing speakers.
+        followUps =
+            followUpSpeakers.active ++ followUpSpeakers.queueing
+
         ( maybeFirst, rest ) =
-            case followUpSpeakers.active of
+            case followUps of
                 first :: rest_ ->
                     ( Just first, rest_ )
 
@@ -1783,7 +1787,7 @@ followUpSpeakersView login followUpSpeakers =
                         , spaceChildren (Css.marginTop (rem 0.5))
                         ]
                     ]
-                    (List.map renderEntry followUpSpeakers.active)
+                    (List.map renderEntry followUps)
                 ]
 
         Nothing ->
