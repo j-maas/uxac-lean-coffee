@@ -17,11 +17,11 @@ import Random
 import Remote exposing (Remote(..))
 import Set exposing (Set)
 import SortedDict exposing (SortedDict)
-import SpeakersStore exposing (ActiveSpeaker, ContributionId, SpeakerList, SpeakersStore)
+import Speakers exposing (ActiveSpeaker, Speakers, ContributionId, SpeakerList)
 import Store exposing (..)
 import Time
 import UUID
-import User exposing (UserId)
+import UserNames exposing (UserId, UserNames)
 
 
 main : Program Flags Model Msg
@@ -52,7 +52,8 @@ type alias Model =
     , timerInput : String
     , newTopicInput : String
     , user : Remote Login
-    , store : Store
+    , userNames : UserNames.Store
+    , speakers : Speakers.Store
     , userNameInput : Maybe String
     , error : Maybe Error
     , workspace : Workspace
@@ -248,7 +249,8 @@ init flags =
       , newTopicInput = ""
       , user = Loading
       , userNameInput = Nothing
-      , store = Store.init
+      , userNames = UserNames.loading
+      , speakers = Speakers.loading
       , error = Nothing
       , workspace = workspace
       , uuidSeeds = uuidSeeds
@@ -276,7 +278,6 @@ type Msg
     | ContinuationVotesReceived (List ContinuationVote)
     | DiscussedTopicsReceived (List ( TopicId, Maybe Time.Posix ))
     | DeadlineReceived (Maybe Time.Posix)
-    | StoreMsg Store.Msg
     | Read TopicId
     | SaveTopic Login
     | EditTopicClicked TopicId
@@ -307,6 +308,10 @@ type Msg
     | TimerInputChanged String
     | TimerStarted
     | TimerCleared
+    -- Stores
+    | UsersReceived UserNames
+    | SpeakersReceived Speakers.DecodedSpeakerList
+    | QuestionsReceived Speakers.DecodedSpeakerList
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -386,8 +391,6 @@ update msg model =
         DeadlineReceived deadline ->
             ( { model | deadline = deadline }, Cmd.none )
 
-        StoreMsg storeMsg ->
-            ( { model | store = Store.update storeMsg model.store }, Cmd.none )
 
         ErrorReceived result ->
             case result of
@@ -538,7 +541,7 @@ update msg model =
         ChangeUserNameClicked ->
             let
                 userName =
-                    (case ( model.user, getUserNames model.store ) of
+                    (case ( model.user, model.userNames ) of
                         ( Got user, Got users ) ->
                             Dict.get (getUserId user) users
 
@@ -555,7 +558,7 @@ update msg model =
         SaveUserNameClicked ->
             case ( model.user, model.userNameInput ) of
                 ( Got user, Just userName ) ->
-                    ( { model | userNameInput = Nothing }, Store.setUserName model.workspace (getUserId user) userName )
+                    ( { model | userNameInput = Nothing }, UserNames.setUserName model.workspace (getUserId user) userName )
 
                 _ ->
                     ( model, Cmd.none )
@@ -563,24 +566,24 @@ update msg model =
         EnqueueClicked ->
             case model.user of
                 Got user ->
-                    ( model, Store.enqueue model.workspace model.timestampField (getUserId user) )
+                    ( model, Speakers.enqueue model.workspace model.timestampField (getUserId user) )
 
                 Loading ->
                     ( model, Cmd.none )
 
         UnqueueClicked speakerContributionId ->
-            ( model, Store.removeSpeakerContribution model.workspace speakerContributionId )
+            ( model, Speakers.removeSpeakerContribution model.workspace speakerContributionId )
 
         AskQuestionClicked ->
             case model.user of
                 Got user ->
-                    ( model, Store.ask model.workspace model.timestampField (getUserId user) )
+                    ( model, Speakers.ask model.workspace model.timestampField (getUserId user) )
 
                 Loading ->
                     ( model, Cmd.none )
 
         QuestionDoneClicked questionId ->
-            ( model, Store.removeQuestion model.workspace questionId )
+            ( model, Speakers.removeQuestion model.workspace questionId )
 
         Tick now ->
             ( { model | now = Just now }, Cmd.none )
@@ -621,6 +624,14 @@ update msg model =
 
         TimerCleared ->
             ( model, clearDeadline model.workspace )
+
+        UsersReceived newUsers ->
+            ({model | userNames = Got newUsers}, Cmd.none)
+
+        SpeakersReceived newSpeakers ->
+            ({model | speakers = Speakers.receivedSpeakers newSpeakers model.speakers}, Cmd.none)
+        QuestionsReceived newQuestions ->
+            ({model | speakers = Speakers.receivedQuestions newQuestions model.speakers},Cmd.none)
 
 
 processParsingError : Decode.Error -> Error
@@ -865,7 +876,7 @@ view model =
                 [ logo
                 , h1 [ css [ Css.margin zero ] ] [ text headingText ]
                 ]
-             , settingsContainerView model.user model.userNameInput (getUserNames model.store)
+             , settingsContainerView model.user model.userNameInput (model.userNames)
              ]
                 ++ errorView model.error
                 ++ discussionView model.user
@@ -873,7 +884,7 @@ view model =
                     continuationVotes
                     model
                     model.timerInput
-                    (Store.getSpeakers model.store)
+                    (Speakers.get model.userNames model.speakers)
                 :: discussedTopics model.user discussedList
                 ++ [ topicEntry model.user model.newTopicInput ]
             )
@@ -1023,18 +1034,18 @@ extract predicate list =
         |> Tuple.mapFirst List.head
 
 
-settingsContainerView : Remote Login -> Maybe String -> Remote UserNames -> Html Msg
-settingsContainerView remoteUser maybeUserNameInput users =
+settingsContainerView : Remote Login -> Maybe String -> UserNames.Store -> Html Msg
+settingsContainerView remoteUser maybeUserNameInput userNamesStore =
     Html.details [ css [ detailsStyle ] ]
         [ Html.summary [] [ text "Settings & Privacy Policy" ]
-        , settingsView [ Css.marginTop (rem 1) ] { user = remoteUser, userNameInput = maybeUserNameInput } users
+        , settingsView [ Css.marginTop (rem 1) ] { user = remoteUser, userNameInput = maybeUserNameInput } userNamesStore
         , Html.div [ css [ Css.marginTop (rem 2) ] ]
             privacyPolicyView
         ]
 
 
-settingsView : List Css.Style -> { a | user : Remote Login, userNameInput : Maybe String } -> Remote UserNames -> Html Msg
-settingsView styles model remoteUsers =
+settingsView : List Css.Style -> { a | user : Remote Login, userNameInput : Maybe String } -> UserNames.Store -> Html Msg
+settingsView styles model userNamesStore =
     let
         section contents =
             div
@@ -1058,7 +1069,7 @@ settingsView styles model remoteUsers =
             )
         ]
         (heading 2 "Settings"
-            :: (case ( model.user, remoteUsers ) of
+            :: (case ( model.user, userNamesStore ) of
                     ( Got user, Got users ) ->
                         let
                             id =
@@ -1329,7 +1340,7 @@ discussionView :
     -> Maybe (List ContinuationVote)
     -> { b | now : Maybe Time.Posix, deadline : Maybe Time.Posix }
     -> String
-    -> Remote SpeakersStore
+    -> Remote (Maybe Speakers)
     -> Html Msg
 discussionView remoteLogin maybeDiscussedTopic continuationVotes times timerInput remoteSpeakers =
     div
@@ -1648,16 +1659,16 @@ continuationVoteButtons user continuationVotes =
         [ stayButton, abstainButton, moveOnButton ]
 
 
-speakerSectionView : Remote Login -> Remote SpeakersStore -> Html Msg
-speakerSectionView remoteLogin remoteSpeakersStore =
+speakerSectionView : Remote Login -> Remote (Maybe Speakers) -> Html Msg
+speakerSectionView remoteLogin remoteSpeakers=
     Html.div
         [ css
             [ spaceChildren (Css.marginTop (rem 0.5))
             ]
         ]
-        (case ( remoteLogin, remoteSpeakersStore ) of
-            ( Got login, Got speakersStore ) ->
-                (case SpeakersStore.speakers speakersStore of
+        (case ( remoteLogin, remoteSpeakers) of
+            ( Got login, Got maybeSpeakers ) ->
+                (case maybeSpeakers of
                     Just speakers ->
                         [ div [] (activeSpeakerView login speakers.activeSpeaker)
                         , followUpSpeakersView login speakers.followUpSpeakers
@@ -2494,9 +2505,9 @@ firestoreSubscriptionsCmd workspace =
         , subscribe { kind = Collection, path = continuationVoteCollectionPath workspace, tag = ContinuationVotesTag }
         , subscribe { kind = Collection, path = discussedCollectionPath workspace, tag = DiscussedTag }
         , subscribe { kind = Doc, path = discussionDeadlineDocPath workspace, tag = DeadlineTag }
-        , subscribe { kind = Collection, path = usersCollectionPath workspace, tag = UserNamesTag }
-        , subscribe { kind = Collection, path = speakerCollectionPath workspace, tag = SpeakersTag }
-        , subscribe { kind = Collection, path = questionCollectionPath workspace, tag = QuestionsTag }
+        , subscribe { kind = Collection, path = UserNames.usersCollectionPath workspace, tag = UserNamesTag }
+        , subscribe { kind = Collection, path = Speakers.speakerCollectionPath workspace, tag = SpeakersTag }
+        , subscribe { kind = Collection, path = Speakers.questionCollectionPath workspace, tag = QuestionsTag }
         ]
 
 
@@ -2689,16 +2700,16 @@ parseFirestoreSubscription value =
                                                 |> Decode.map DeadlineReceived
 
                                         UserNamesTag ->
-                                            userNamesDecoder
-                                                |> Decode.map (\users -> StoreMsg <| UsersReceived users)
+                                            UserNames.userNamesDecoder
+                                                |> Decode.map UsersReceived
 
                                         SpeakersTag ->
-                                            speakersDecoder
-                                                |> Decode.map (\speakers -> StoreMsg <| SpeakersReceived speakers)
+                                            Speakers.speakersDecoder
+                                                |> Decode.map SpeakersReceived 
 
                                         QuestionsTag ->
-                                            speakersDecoder
-                                                |> Decode.map (\askers -> StoreMsg <| QuestionsReceived askers)
+                                            Speakers.speakersDecoder
+                                                |> Decode.map QuestionsReceived 
                             in
                             Decode.field "data" dataDecoder
                         )
