@@ -1,47 +1,29 @@
-module Speakers exposing (ActiveSpeaker, ContributionId, DecodedSpeakerList, Speaker, SpeakerEntry, SpeakerList, Speakers, Store, ask, enqueue, get, loading, questionCollectionPath, receivedQuestions, receivedSpeakers, removeQuestion, removeSpeakerContribution, speakerCollectionPath, speakersDecoder)
+module Speakers exposing (ContributionId, CurrentSpeaker, DecodedSpeakers, Speaker, SpeakerEntry, SpeakerList, Speakers, Store, ask, enqueue, get, loading, questionCollectionPath, receivedQuestions, receivedSpeakers, removeQuestion, removeSpeakerContribution, speakerCollectionPath, speakersDecoder)
 
 import Dict
 import Json.Decode as Decode exposing (Decoder)
 import Json.Encode as Encode
+import QueuedList exposing (QueuedList)
 import Remote exposing (Remote(..))
 import Store
 import Time
 import UserNames exposing (UserId)
 
 
-type Store
-    = Store
-        { speakers : Remote DecodedSpeakerList
-        , questions : Remote DecodedSpeakerList
-        }
+type alias Speakers =
+    { current : CurrentSpeaker
+    , following : SpeakerList
+    }
 
 
-loading : Store
-loading =
-    Store
-        { speakers = Loading
-        , questions = Loading
-        }
-
-
-receivedSpeakers : DecodedSpeakerList -> Store -> Store
-receivedSpeakers newSpeakers (Store store) =
-    Store
-        { store
-            | speakers = Got newSpeakers
-        }
-
-
-receivedQuestions : DecodedSpeakerList -> Store -> Store
-receivedQuestions newQuestions (Store store) =
-    Store
-        { store
-            | questions = Got newQuestions
-        }
+type alias CurrentSpeaker =
+    { speaker : SpeakerEntry
+    , questions : SpeakerList
+    }
 
 
 type alias SpeakerList =
-    List SpeakerEntry
+    QueuedList SpeakerEntry
 
 
 type alias SpeakerEntry =
@@ -56,62 +38,6 @@ type alias Speaker =
     { userId : UserId
     , name : String
     }
-
-
-type alias Speakers =
-    { activeSpeaker : ActiveSpeaker
-    , followUpSpeakers : SpeakerList
-    }
-
-
-type alias ActiveSpeaker =
-    { speaker : SpeakerEntry
-    , questions : SpeakerList
-    }
-
-
-get : UserNames.Store -> Store -> Remote (Maybe Speakers)
-get userStore (Store store) =
-    case ( userStore, store.speakers, store.questions ) of
-        ( Got userNames, Got rawSpeakers, Got rawQuestions ) ->
-            Got
-                (let
-                    speakers =
-                        mapToSpeakerList userNames rawSpeakers
-
-                    questions =
-                        mapToSpeakerList userNames rawQuestions
-                 in
-                 case speakers of
-                    active :: followUps ->
-                        Just
-                            { activeSpeaker =
-                                { speaker = active
-                                , questions = questions
-                                }
-                            , followUpSpeakers = followUps
-                            }
-
-                    [] ->
-                        Nothing
-                )
-
-        _ ->
-            Loading
-
-
-mapToSpeakerList : UserNames.UserNames -> DecodedSpeakerList -> SpeakerList
-mapToSpeakerList userNames rawSpeakers =
-    rawSpeakers
-        -- TODO: Do not ignore nameless speakers, show them to the user.
-        |> List.filterMap
-            (\( contributionId, userId ) ->
-                Dict.get userId userNames
-                    |> Maybe.map
-                        (\name ->
-                            ( contributionId, { userId = userId, name = name } )
-                        )
-            )
 
 
 enqueue : Store.Workspace -> Store.TimestampField -> UserId -> Cmd msg
@@ -144,8 +70,93 @@ removeQuestion workspace speakerContributionId =
         ]
 
 
-type alias DecodedSpeakerList =
-    List ( ContributionId, UserId )
+
+-- BACKEND
+
+
+type Store
+    = Store
+        { speakers : Remote DecodedSpeakers
+        , questions : Remote DecodedSpeakers
+        }
+
+
+loading : Store
+loading =
+    Store
+        { speakers = Loading
+        , questions = Loading
+        }
+
+
+get : UserNames.Store -> Store -> Remote (Maybe Speakers)
+get userStore (Store store) =
+    Got
+        (\userNames rawSpeakers rawQuestions ->
+            let
+                speakers =
+                    mapToSpeakerList userNames rawSpeakers
+
+                questions =
+                    mapToSpeakerList userNames rawQuestions
+            in
+            case speakers.active of
+                current :: following ->
+                    Just
+                        { current =
+                            { speaker = current
+                            , questions = questions
+                            }
+                        , following =
+                            { active = following
+                            , queueing = speakers.queueing
+                            }
+                        }
+
+                [] ->
+                    Nothing
+        )
+        |> Remote.andMap userStore
+        |> Remote.andMap store.speakers
+        |> Remote.andMap store.questions
+
+
+mapToSpeakerList : UserNames.UserNames -> DecodedSpeakers -> SpeakerList
+mapToSpeakerList userNames rawSpeakers =
+    rawSpeakers
+        -- TODO: Do not ignore nameless speakers, show them to the user.
+        |> QueuedList.filterMap
+            (\( contributionId, userId ) ->
+                Dict.get userId userNames
+                    |> Maybe.map
+                        (\name ->
+                            ( contributionId, { userId = userId, name = name } )
+                        )
+            )
+
+
+receivedSpeakers : DecodedSpeakers -> Store -> Store
+receivedSpeakers newSpeakers (Store store) =
+    Store
+        { store
+            | speakers = Got newSpeakers
+        }
+
+
+receivedQuestions : DecodedSpeakers -> Store -> Store
+receivedQuestions newQuestions (Store store) =
+    Store
+        { store
+            | questions = Got newQuestions
+        }
+
+
+type alias DecodedSpeakers =
+    QueuedList DecodedSpeakerEntry
+
+
+type alias DecodedSpeakerEntry =
+    ( ContributionId, UserId )
 
 
 speakerEncoder : Store.TimestampField -> UserId -> Encode.Value
@@ -156,7 +167,7 @@ speakerEncoder timestamp userId =
         ]
 
 
-speakersDecoder : Decoder DecodedSpeakerList
+speakersDecoder : Decoder DecodedSpeakers
 speakersDecoder =
     Decode.list
         (Decode.map3
@@ -173,13 +184,30 @@ speakersDecoder =
            We ignore such entries until they are available with a timestamp.
         -}
         |> Decode.map
-            (List.filterMap
-                (\( maybeCreatedAt, speaker ) ->
-                    Maybe.map (\enqueued -> ( enqueued, speaker )) maybeCreatedAt
-                )
+            (\list ->
+                let
+                    ( unsortedSpeakers, queueing ) =
+                        List.foldl
+                            (\( maybeCreatedAt, speaker ) ( currentUnsortedSpeakers, currentQueueing ) ->
+                                case maybeCreatedAt of
+                                    Just createdAt ->
+                                        ( currentUnsortedSpeakers ++ [ ( createdAt, speaker ) ], currentQueueing )
+
+                                    Nothing ->
+                                        ( currentUnsortedSpeakers, currentQueueing ++ [ speaker ] )
+                            )
+                            ( [], [] )
+                            list
+
+                    speakers =
+                        unsortedSpeakers
+                            |> List.sortBy (\( enqueued, _ ) -> Time.posixToMillis enqueued)
+                            |> List.map Tuple.second
+                in
+                { active = speakers
+                , queueing = queueing
+                }
             )
-        |> Decode.map (List.sortBy (\( enqueued, _ ) -> Time.posixToMillis enqueued))
-        |> Decode.map (List.map Tuple.second)
 
 
 speakerCollectionPath : Store.Workspace -> Store.Path

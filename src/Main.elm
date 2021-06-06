@@ -17,7 +17,7 @@ import Random
 import Remote exposing (Remote(..))
 import Set exposing (Set)
 import SortedDict exposing (SortedDict)
-import Speakers exposing (ActiveSpeaker, ContributionId, SpeakerList, Speakers)
+import Speakers exposing (ContributionId, CurrentSpeaker, SpeakerList, Speakers)
 import Store exposing (..)
 import Time
 import UUID
@@ -310,8 +310,8 @@ type Msg
     | TimerCleared
       -- Stores
     | UsersReceived UserNames
-    | SpeakersReceived Speakers.DecodedSpeakerList
-    | QuestionsReceived Speakers.DecodedSpeakerList
+    | SpeakersReceived Speakers.DecodedSpeakers
+    | QuestionsReceived Speakers.DecodedSpeakers
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -1670,8 +1670,8 @@ speakerSectionView remoteLogin remoteSpeakers =
             ( Got login, Got maybeSpeakers ) ->
                 (case maybeSpeakers of
                     Just speakers ->
-                        [ div [] (activeSpeakerView login speakers.activeSpeaker)
-                        , followUpSpeakersView login speakers.followUpSpeakers
+                        [ div [] (currentSpeakerView login speakers.current)
+                        , followUpSpeakersView login speakers.following
                         ]
 
                     Nothing ->
@@ -1689,11 +1689,11 @@ speakerSectionView remoteLogin remoteSpeakers =
         )
 
 
-activeSpeakerView : Login -> ActiveSpeaker -> List (Html Msg)
-activeSpeakerView login active =
+currentSpeakerView : Login -> CurrentSpeaker -> List (Html Msg)
+currentSpeakerView login current =
     let
         ( activeContributionId, activeSpeaker ) =
-            active.speaker
+            current.speaker
 
         currentUserId =
             getUserId login
@@ -1703,7 +1703,7 @@ activeSpeakerView login active =
                 == speaker_.userId
                 || isAdminActiveForUser (Got login)
     in
-    speakerContributionView (canModify activeSpeaker && List.isEmpty active.questions)
+    speakerContributionView (canModify activeSpeaker && List.isEmpty current.questions.active)
         (UnqueueClicked activeContributionId)
         "Done"
         activeSpeaker.name
@@ -1713,7 +1713,7 @@ activeSpeakerView login active =
                         Html.li []
                             (speakerContributionView (canModify asker) (QuestionDoneClicked questionId) "Done" asker.name)
                     )
-                    active.questions
+                    current.questions.active
                 )
            , Html.button [ css [ buttonStyle ], onClick AskQuestionClicked ] [ Html.text "Ask" ]
            ]
@@ -1723,7 +1723,7 @@ followUpSpeakersView : Login -> SpeakerList -> Html Msg
 followUpSpeakersView login followUpSpeakers =
     let
         ( maybeFirst, rest ) =
-            case followUpSpeakers of
+            case followUpSpeakers.active of
                 first :: rest_ ->
                     ( Just first, rest_ )
 
@@ -1783,7 +1783,7 @@ followUpSpeakersView login followUpSpeakers =
                         , spaceChildren (Css.marginTop (rem 0.5))
                         ]
                     ]
-                    (List.map renderEntry followUpSpeakers)
+                    (List.map renderEntry followUpSpeakers.active)
                 ]
 
         Nothing ->
