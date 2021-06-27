@@ -1,4 +1,4 @@
-module QueuedList exposing (..)
+module QueuedList exposing (QueuedList, map, filterMap, allToList)
 
 
 type alias QueuedList a =
@@ -19,3 +19,7 @@ filterMap mapping list =
     { active = List.filterMap mapping list.active
     , queueing = List.filterMap mapping list.queueing
     }
+
+allToList : QueuedList a -> List a
+allToList list =
+    list.active ++ list.queueing

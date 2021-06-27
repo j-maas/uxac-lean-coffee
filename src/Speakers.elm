@@ -1,4 +1,4 @@
-module Speakers exposing (ContributionId, CurrentSpeaker, DecodedSpeakers, Speaker, SpeakerEntry, SpeakerList, Speakers, Store, ask, enqueue, get, loading, questionCollectionPath, receivedQuestions, receivedSpeakers, removeQuestion, removeSpeakerContribution, speakerCollectionPath, speakersDecoder)
+module Speakers exposing (ContributionId, CurrentSpeaker, DecodedSpeakers, Speaker, SpeakerEntry, SpeakerList, Speakers, Store, ask, clearAll, enqueue, get, loading, questionCollectionPath, removeQuestion, removeSpeakerContribution, speakerCollectionPath, speakersDecoder, updateQuestions, updateSpeakers)
 
 import Dict
 import Json.Decode as Decode exposing (Decoder)
@@ -135,16 +135,33 @@ mapToSpeakerList userNames rawSpeakers =
             )
 
 
-receivedSpeakers : DecodedSpeakers -> Store -> Store
-receivedSpeakers newSpeakers (Store store) =
+clearAll : Store.Workspace -> Store -> Cmd msg
+clearAll workspace (Store store) =
+    case ( store.speakers, store.questions ) of
+        ( Got speakers, Got questions ) ->
+            let
+                speakerDocs =
+                    List.map (\( id, _ ) -> speakerCollectionPath workspace ++ [ id ]) (QueuedList.allToList speakers)
+
+                questionDocs =
+                    List.map (\( id, _ ) -> questionCollectionPath workspace ++ [ id ]) (QueuedList.allToList questions)
+            in
+            Store.deleteDocs (speakerDocs ++ questionDocs)
+
+        _ ->
+            Cmd.none
+
+
+updateSpeakers : DecodedSpeakers -> Store -> Store
+updateSpeakers newSpeakers (Store store) =
     Store
         { store
             | speakers = Got newSpeakers
         }
 
 
-receivedQuestions : DecodedSpeakers -> Store -> Store
-receivedQuestions newQuestions (Store store) =
+updateQuestions : DecodedSpeakers -> Store -> Store
+updateQuestions newQuestions (Store store) =
     Store
         { store
             | questions = Got newQuestions

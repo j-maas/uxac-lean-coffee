@@ -498,6 +498,7 @@ update msg model =
                                 [ finishDiscussion model.workspace inDiscussion model.timestampField
                                 , clearContinuationVotes model.workspace (Remote.toMaybe model.continuationVotes)
                                 , clearDeadline model.workspace
+                                , Speakers.clearAll model.workspace model.speakers
                                 ]
                     in
                     ( model, cmds )
@@ -508,7 +509,11 @@ update msg model =
         MoveToSuggestedClicked ->
             case model.inDiscussion of
                 Just _ ->
-                    ( model, removeTopicInDiscussion model.workspace )
+                    ( model
+                    , Cmd.batch
+                        [ removeTopicInDiscussion model.workspace
+                        ]
+                    )
 
                 Nothing ->
                     ( model, Cmd.none )
@@ -600,10 +605,10 @@ update msg model =
             ( { model | userNames = Got newUsers }, Cmd.none )
 
         SpeakersReceived newSpeakers ->
-            ( { model | speakers = Speakers.receivedSpeakers newSpeakers model.speakers }, Cmd.none )
+            ( { model | speakers = Speakers.updateSpeakers newSpeakers model.speakers }, Cmd.none )
 
         QuestionsReceived newQuestions ->
-            ( { model | speakers = Speakers.receivedQuestions newQuestions model.speakers }, Cmd.none )
+            ( { model | speakers = Speakers.updateQuestions newQuestions model.speakers }, Cmd.none )
 
 
 startTimer : Workspace -> Maybe Time.Posix -> String -> Remote (List ContinuationVote) -> Cmd Msg
