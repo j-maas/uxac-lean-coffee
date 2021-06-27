@@ -1,0 +1,56 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+  
+    // Allow all access for admins.
+    match /{document=**} {
+      allow read, write: if request.auth != null && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+    
+    match /workspaces/{workspace} {
+      match /topics/{topic} {
+        allow read: if true;
+        allow create: if request.auth != null;
+        allow write: if request.auth.uid == resource.data.userId;
+      }
+
+      match /votes/{vote} {
+        allow read: if true;
+        allow create: if request.auth != null;
+        allow write: if request.auth.uid == resource.data.userId;
+      }
+
+      match /discussed/{doc} {
+        allow read: if true;
+      }
+
+      match /discussion/{doc} {
+        allow read: if true;
+      }
+
+      match /continuationVotes/{vote} {
+        allow read: if true;
+        allow create: if request.auth != null;
+        allow write: if request.auth.uid == resource.data.userId;
+      }
+      
+      match /users/{userId} {
+        allow read: if true;
+        allow create: if request.auth != null;
+        allow write: if request.auth.uid == userId;
+      }
+      
+      match /speakers/{userId} {
+        allow read: if true;
+        allow create: if request.auth != null;
+        allow write: if request.auth.uid == resource.data.userId;
+      }
+      
+      match /questions/{userId} {
+        allow read: if true;
+        allow create: if request.auth != null;
+        allow write: if request.auth.uid == resource.data.userId;
+      }
+    }
+  }
+}
