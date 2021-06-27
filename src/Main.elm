@@ -487,7 +487,7 @@ update msg model =
             ( model, deleteTopic model.workspace id model.votes )
 
         Discuss topicId ->
-            ( model, submitTopicInDiscussion model.workspace topicId model.topics model.timestampField )
+            ( model, submitTopicInDiscussion model.workspace topicId model.topics model.timestampField model.now model.timerInput model.continuationVotes )
 
         MoveToDiscussedClicked ->
             case model.inDiscussion of
@@ -591,35 +591,7 @@ update msg model =
             ( { model | timerInput = newInput }, Cmd.none )
 
         TimerStarted ->
-            let
-                maybeTimerInput =
-                    String.toInt model.timerInput
-            in
-            case ( model.now, maybeTimerInput ) of
-                ( Just now, Just timerInput ) ->
-                    let
-                        sanitizedTimerInput =
-                            timerInput
-                                |> atLeast 0
-
-                        timerInputInMilliseconds =
-                            sanitizedTimerInput * 1000 * 60
-
-                        deadline =
-                            Time.posixToMillis now
-                                + timerInputInMilliseconds
-                                |> Time.millisToPosix
-
-                        cmds =
-                            Cmd.batch
-                                [ submitDeadline model.workspace deadline
-                                , clearContinuationVotes model.workspace (Remote.toMaybe model.continuationVotes)
-                                ]
-                    in
-                    ( model, cmds )
-
-                _ ->
-                    ( model, Cmd.none )
+            ( model, startTimer model.workspace model.now model.timerInput model.continuationVotes )
 
         TimerCleared ->
             ( model, clearDeadline model.workspace )
@@ -632,6 +604,39 @@ update msg model =
 
         QuestionsReceived newQuestions ->
             ( { model | speakers = Speakers.receivedQuestions newQuestions model.speakers }, Cmd.none )
+
+
+startTimer : Workspace -> Maybe Time.Posix -> String -> Remote (List ContinuationVote) -> Cmd Msg
+startTimer workspace maybeNow rawTimerInput continuationVotes =
+    let
+        maybeTimerInput =
+            String.toInt rawTimerInput
+    in
+    case ( maybeNow, maybeTimerInput ) of
+        ( Just now, Just timerInput ) ->
+            let
+                sanitizedTimerInput =
+                    timerInput
+                        |> atLeast 0
+
+                timerInputInMilliseconds =
+                    sanitizedTimerInput * 1000 * 60
+
+                deadline =
+                    Time.posixToMillis now
+                        + timerInputInMilliseconds
+                        |> Time.millisToPosix
+
+                cmds =
+                    Cmd.batch
+                        [ submitDeadline workspace deadline
+                        , clearContinuationVotes workspace (Remote.toMaybe continuationVotes)
+                        ]
+            in
+            cmds
+
+        _ ->
+            Cmd.none
 
 
 processParsingError : Decode.Error -> Error
@@ -784,8 +789,8 @@ continuationVotePath workspace userId =
     continuationVoteCollectionPath workspace ++ [ userId ]
 
 
-submitTopicInDiscussion : Workspace -> TopicId -> Remote TopicList -> TimestampField -> Cmd msg
-submitTopicInDiscussion workspace topicId remoteTopics timestampField =
+submitTopicInDiscussion : Workspace -> TopicId -> Remote TopicList -> TimestampField -> Maybe Time.Posix -> String -> Remote (List ContinuationVote) -> Cmd Msg
+submitTopicInDiscussion workspace topicId remoteTopics timestampField now timerInput continuationVotes =
     let
         maybeTopic =
             Remote.toMaybe remoteTopics
@@ -799,6 +804,7 @@ submitTopicInDiscussion workspace topicId remoteTopics timestampField =
                     , doc = topicIdEncoder topicId
                     }
                 , Speakers.enqueue workspace timestampField topic.creator
+                , startTimer workspace now timerInput continuationVotes
                 ]
 
         Nothing ->
