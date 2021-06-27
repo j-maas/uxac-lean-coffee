@@ -487,7 +487,7 @@ update msg model =
             ( model, deleteTopic model.workspace id model.votes )
 
         Discuss topicId ->
-            ( model, submitTopicInDiscussion model.workspace topicId )
+            ( model, submitTopicInDiscussion model.workspace topicId model.topics model.timestampField )
 
         MoveToDiscussedClicked ->
             case model.inDiscussion of
@@ -784,12 +784,26 @@ continuationVotePath workspace userId =
     continuationVoteCollectionPath workspace ++ [ userId ]
 
 
-submitTopicInDiscussion : Workspace -> TopicId -> Cmd msg
-submitTopicInDiscussion workspace topicId =
-    setDoc
-        { docPath = inDiscussionDocPath workspace
-        , doc = topicIdEncoder topicId
-        }
+submitTopicInDiscussion : Workspace -> TopicId -> Remote TopicList -> TimestampField -> Cmd msg
+submitTopicInDiscussion workspace topicId remoteTopics timestampField =
+    let
+        maybeTopic =
+            Remote.toMaybe remoteTopics
+                |> Maybe.andThen (SortedDict.get topicId)
+    in
+    case maybeTopic of
+        Just topic ->
+            Cmd.batch
+                [ setDoc
+                    { docPath = inDiscussionDocPath workspace
+                    , doc = topicIdEncoder topicId
+                    }
+                , Speakers.enqueue workspace timestampField topic.creator
+                ]
+
+        Nothing ->
+            -- TODO: Report invalid state.
+            Cmd.none
 
 
 finishDiscussion : Workspace -> TopicId -> TimestampField -> Cmd msg
