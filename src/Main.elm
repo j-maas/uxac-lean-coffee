@@ -286,7 +286,6 @@ type Msg
     | DeleteTopic TopicId
     | Discuss TopicId
     | MoveToDiscussedClicked
-    | MoveToSuggestedClicked
     | SortTopics
     | Upvote Login TopicId
     | RemoveUpvote Login TopicId
@@ -502,18 +501,6 @@ update msg model =
                                 ]
                     in
                     ( model, cmds )
-
-                Nothing ->
-                    ( model, Cmd.none )
-
-        MoveToSuggestedClicked ->
-            case model.inDiscussion of
-                Just _ ->
-                    ( model
-                    , Cmd.batch
-                        [ removeTopicInDiscussion model.workspace
-                        ]
-                    )
 
                 Nothing ->
                     ( model, Cmd.none )
@@ -2047,49 +2034,18 @@ topicToDiscussCard remoteUser ( topicId, entry ) =
         voteCount =
             List.length entry.votes
 
-        maybeDeleteButton =
-            if isAdminActiveForUser remoteUser then
-                [ deleteButton topicId
-                ]
-
-            else
-                []
-
         cardButtons =
-            votesIndicator voteCount :: maybeDeleteButton
-
-        maybeMoveSection =
-            if isAdminActiveForUser remoteUser then
-                [ div
-                    [ css
-                        [ Css.displayFlex
-                        , Css.flexDirection Css.row
-                        , Css.alignItems Css.center
-                        , spaceChildren (Css.marginLeft (rem 0.5))
-                        ]
-                    ]
-                    [ Html.span [] [ text "Move this to:" ]
-                    , button
-                        [ css [ buttonStyle ]
-                        , onClick MoveToDiscussedClicked
-                        ]
-                        [ text "Discussed topics" ]
-                    , button
-                        [ css [ buttonStyle ]
-                        , onClick MoveToSuggestedClicked
-                        ]
-                        [ text "Suggested topics" ]
-                    ]
+            [ votesIndicator voteCount
+            , button
+                [ css [ buttonStyle ]
+                , onClick MoveToDiscussedClicked
                 ]
-
-            else
-                []
+                [ text "Finish discussion" ]
+            ]
 
         toolbar =
             [ div [ css [ spaceChildren (Css.marginTop (rem 0.5)) ] ]
-                (toolbarRow cardButtons
-                    :: maybeMoveSection
-                )
+                [ toolbarRow cardButtons ]
             ]
     in
     topicCard
