@@ -815,11 +815,6 @@ finishDiscussion workspace topicId timestamp =
         ]
 
 
-removeTopicInDiscussion : Workspace -> Cmd msg
-removeTopicInDiscussion workspace =
-    deleteDocs [ inDiscussionDocPath workspace ]
-
-
 submitDeadline : Workspace -> Time.Posix -> Cmd msg
 submitDeadline workspace deadline =
     setDoc
@@ -1366,7 +1361,7 @@ discussionView remoteLogin maybeDiscussedTopic continuationVotes times timerInpu
         (h2 [ css [ Css.margin zero ] ] [ text "In discussion" ]
             :: (case maybeDiscussedTopic of
                     Just topic ->
-                        [ topicToDiscussCard remoteLogin topic
+                        [ topicToDiscussCard topic
                         ]
 
                     Nothing ->
@@ -2028,8 +2023,8 @@ sortButton =
     button [ css [ buttonStyle ], onClick SortTopics ] [ text "Sort" ]
 
 
-topicToDiscussCard : Remote Login -> TopicWithVotes -> Html Msg
-topicToDiscussCard remoteUser ( topicId, entry ) =
+topicToDiscussCard : TopicWithVotes -> Html Msg
+topicToDiscussCard ( topicId, entry ) =
     let
         voteCount =
             List.length entry.votes
