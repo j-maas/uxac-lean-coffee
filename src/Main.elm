@@ -1717,8 +1717,8 @@ speakerSectionView remoteLogin remoteSpeakers timerState =
             ( Got login, Got maybeSpeakers ) ->
                 (case maybeSpeakers of
                     Just speakers ->
-                        [ div [] (currentSpeakerView login speakers.current)
-                        , followUpSpeakersView login speakers.following timerState
+                        [ div [] (currentSpeakerView login speakers.current timerState)
+                        , followUpSpeakersView login speakers.following
                         ]
 
                     Nothing ->
@@ -1744,8 +1744,8 @@ speakerSectionView remoteLogin remoteSpeakers timerState =
         )
 
 
-currentSpeakerView : Login -> CurrentSpeaker -> List (Html Msg)
-currentSpeakerView login current =
+currentSpeakerView : Login -> CurrentSpeaker -> TimerState -> List (Html Msg)
+currentSpeakerView login current timerState =
     let
         ( activeContributionId, activeSpeaker ) =
             current.speaker
@@ -1754,24 +1754,11 @@ currentSpeakerView login current =
             getUserId login
 
         canModify speaker_ =
-            if
-                currentUserId
-                    == speaker_.userId
-                    || isAdminActiveForUser (Got login)
-            then
-                Modifiable
-
-            else
-                Invisible
-
-        contributionModification =
-            if canModify activeSpeaker == Modifiable && List.isEmpty current.questions.active then
-                Modifiable
-
-            else
-                Invisible
+            currentUserId
+                == speaker_.userId
+                || isAdminActiveForUser (Got login)
     in
-    speakerContributionView contributionModification
+    speakerContributionView (canModify activeSpeaker && List.isEmpty current.questions.active)
         (CurrentSpeakerDoneClicked activeContributionId)
         "Done"
         activeSpeaker.name
@@ -1783,12 +1770,22 @@ currentSpeakerView login current =
                     )
                     current.questions.active
                 )
-           , Html.button [ css [ buttonStyle ], onClick AskQuestionClicked ] [ Html.text "Ask" ]
+           , Html.button
+                ([ css [ buttonStyle ], onClick AskQuestionClicked ]
+                    ++ (case timerState of
+                            Ended ->
+                                [ Attributes.disabled True ]
+
+                            _ ->
+                                []
+                       )
+                )
+                [ Html.text "Ask" ]
            ]
 
 
-followUpSpeakersView : Login -> SpeakerList -> TimerState -> Html Msg
-followUpSpeakersView login followUpSpeakers timerState =
+followUpSpeakersView : Login -> SpeakerList -> Html Msg
+followUpSpeakersView login followUpSpeakers =
     let
         -- TODO: Add a loading indicator for queueing speakers.
         followUps =
@@ -1809,22 +1806,10 @@ followUpSpeakersView login followUpSpeakers timerState =
 
                 canModify =
                     currentUserId == speaker.userId
-
-                contributionModification =
-                    if canModify then
-                        case timerState of
-                            Ended ->
-                                Disabled
-
-                            _ ->
-                                Modifiable
-
-                    else
-                        Invisible
             in
             Html.li []
                 (speakerContributionView
-                    contributionModification
+                    canModify
                     (UnqueueClicked contributionId)
                     "Unqueue"
                     speaker.name
@@ -1874,40 +1859,19 @@ followUpSpeakersView login followUpSpeakers timerState =
             Html.div [] [ Html.text "No more speakers yet." ]
 
 
-type ContributionModification
-    = Invisible
-    | Modifiable
-    | Disabled
-
-
-speakerContributionView : ContributionModification -> Msg -> String -> String -> List (Html Msg)
-speakerContributionView contributionModification msg label speakerName =
+speakerContributionView : Bool -> Msg -> String -> String -> List (Html Msg)
+speakerContributionView canModify msg label speakerName =
     text speakerName
-        :: (let
-                button disabled =
-                    Html.button
-                        ([ css [ buttonStyle, Css.marginLeft (rem 0.5) ]
-                         , onClick msg
-                         ]
-                            ++ (if disabled then
-                                    [ Attributes.disabled True ]
-
-                                else
-                                    []
-                               )
-                        )
-                        [ text label ]
-            in
-            case contributionModification of
-                Modifiable ->
-                    [ button False
+        :: (if canModify then
+                [ Html.button
+                    [ css [ buttonStyle, Css.marginLeft (rem 0.5) ]
+                    , onClick msg
                     ]
+                    [ text label ]
+                ]
 
-                Disabled ->
-                    [ button True ]
-
-                Invisible ->
-                    []
+            else
+                []
            )
 
 
