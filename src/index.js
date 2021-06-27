@@ -19,6 +19,14 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 
 const db = firebase.firestore();
+const auth = firebase.auth();
+
+// Potentially connect to emulator.
+if (process.env.NODE_ENV === "development") {
+  console.log("Using emulators.");
+  db.useEmulator("localhost", 8080);
+  auth.useEmulator("http://localhost:9099");
+}
 
 var randomValues = new Int32Array(4);
 window.crypto.getRandomValues(randomValues);
@@ -46,7 +54,7 @@ const app = Elm.Main.init({
 
 // Sign in and pass the user to Elm.
 
-firebase.auth().onAuthStateChanged((currentUser) => {
+auth.onAuthStateChanged((currentUser) => {
   if (currentUser !== null) {
     if (currentUser.isAnonymous) {
       const id = currentUser.uid;
@@ -77,10 +85,10 @@ firebase.auth().onAuthStateChanged((currentUser) => {
 
   } else {
     console.log("Logging in user anonymously.");
-    firebase.auth()
+    auth
       .setPersistence(firebase.auth.Auth.Persistence.LOCAL) // Persist the authentication across page loads.
       .then(() => {
-        return firebase.auth().signInAnonymously();
+        return auth.signInAnonymously();
       })
       .catch(sendErrorToElm);
   }
@@ -88,22 +96,22 @@ firebase.auth().onAuthStateChanged((currentUser) => {
 
 app.ports.logInWithGoogle_.subscribe(() => {
   var provider = new firebase.auth.GoogleAuthProvider();
-  firebase.auth()
+  auth
     .setPersistence(firebase.auth.Auth.Persistence.LOCAL) // Persist the authentication across page loads.
     .then(() => {
       console.log("Logging in user via google.com.");
-      return firebase.auth().signInWithRedirect(provider);
+      return auth.signInWithRedirect(provider);
     })
     .catch(sendErrorToElm);
 });
 
 app.ports.logOut_.subscribe(() => {
   console.log("Logging out user.");
-  firebase.auth().signOut()
+  auth.signOut()
     .catch(sendErrorToElm);
 });
 
-firebase.auth()
+auth
   .getRedirectResult()
   .catch(sendErrorToElm);
 
