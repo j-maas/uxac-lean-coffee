@@ -300,6 +300,7 @@ type Msg
     | UserNameChanged String
     | SaveUserNameClicked
     | EnqueueClicked
+    | CurrentSpeakerDoneClicked ContributionId
     | UnqueueClicked ContributionId
     | AskQuestionClicked
     | QuestionDoneClicked ContributionId
@@ -561,6 +562,14 @@ update msg model =
 
                 Loading ->
                     ( model, Cmd.none )
+
+        CurrentSpeakerDoneClicked speakerContributionId ->
+            ( model
+            , Cmd.batch
+                [ Speakers.removeSpeakerContribution model.workspace speakerContributionId
+                , startContinuationVote model.workspace
+                ]
+            )
 
         UnqueueClicked speakerContributionId ->
             ( model, Speakers.removeSpeakerContribution model.workspace speakerContributionId )
@@ -1717,10 +1726,15 @@ speakerSectionView remoteLogin remoteSpeakers timerState =
                 )
                     ++ [ Html.button
                             ([ css [ buttonStyle ]
-                            , onClick EnqueueClicked
-                            ]++ case timerState of
-                                Ended -> [Attributes.disabled True]
-                                _ -> []
+                             , onClick EnqueueClicked
+                             ]
+                                ++ (case timerState of
+                                        Ended ->
+                                            [ Attributes.disabled True ]
+
+                                        _ ->
+                                            []
+                                   )
                             )
                             [ text "Enqueue" ]
                        ]
@@ -1758,7 +1772,7 @@ currentSpeakerView login current =
                 Invisible
     in
     speakerContributionView contributionModification
-        (UnqueueClicked activeContributionId)
+        (CurrentSpeakerDoneClicked activeContributionId)
         "Done"
         activeSpeaker.name
         ++ [ Html.ol []
@@ -1773,7 +1787,7 @@ currentSpeakerView login current =
            ]
 
 
-followUpSpeakersView : Login -> SpeakerList ->  TimerState -> Html Msg
+followUpSpeakersView : Login -> SpeakerList -> TimerState -> Html Msg
 followUpSpeakersView login followUpSpeakers timerState =
     let
         -- TODO: Add a loading indicator for queueing speakers.
