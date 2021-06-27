@@ -1384,7 +1384,7 @@ discussionView remoteLogin maybeDiscussedTopic continuationVotes times timerInpu
                )
             ++ remainingTime remoteLogin times timerInput
             :: continuationVote remoteLogin continuationVotes
-            ++ [ speakerSectionView remoteLogin remoteSpeakers ]
+            ++ [ speakerSectionView remoteLogin remoteSpeakers (getTimerState times) ]
         )
 
 
@@ -1426,8 +1426,7 @@ remainingTimeDisplay times =
             Just deadline ->
                 let
                     difference =
-                        Time.posixToMillis deadline
-                            - Time.posixToMillis times.now
+                        calculateRemainingMilliseconds { now = times.now, deadline = deadline }
 
                     differenceMinutes =
                         ceiling (toFloat difference / (60 * 1000))
@@ -1485,6 +1484,38 @@ remainingTimeDisplay times =
                     ]
                     [ text message ]
         ]
+
+
+calculateRemainingMilliseconds : { now : Time.Posix, deadline : Time.Posix } -> Int
+calculateRemainingMilliseconds times =
+    Time.posixToMillis times.deadline
+        - Time.posixToMillis times.now
+
+
+type TimerState
+    = LoadingTimer
+    | NotStarted
+    | Running
+    | Ended
+
+
+getTimerState : { a | now : Maybe Time.Posix, deadline : Maybe Time.Posix } -> TimerState
+getTimerState times =
+    case times.now of
+        Nothing ->
+            LoadingTimer
+
+        Just now ->
+            case times.deadline of
+                Nothing ->
+                    NotStarted
+
+                Just deadline ->
+                    if calculateRemainingMilliseconds { now = now, deadline = deadline } > 0 then
+                        Running
+
+                    else
+                        Ended
 
 
 atLeast : Int -> Int -> Int
@@ -1666,8 +1697,8 @@ continuationVoteButtons user continuationVotes =
         [ stayButton, abstainButton, moveOnButton ]
 
 
-speakerSectionView : Remote Login -> Remote (Maybe Speakers) -> Html Msg
-speakerSectionView remoteLogin remoteSpeakers =
+speakerSectionView : Remote Login -> Remote (Maybe Speakers) -> TimerState -> Html Msg
+speakerSectionView remoteLogin remoteSpeakers timerState =
     Html.div
         [ css
             [ spaceChildren (Css.marginTop (rem 0.5))
@@ -1678,16 +1709,19 @@ speakerSectionView remoteLogin remoteSpeakers =
                 (case maybeSpeakers of
                     Just speakers ->
                         [ div [] (currentSpeakerView login speakers.current)
-                        , followUpSpeakersView login speakers.following
+                        , followUpSpeakersView login speakers.following timerState
                         ]
 
                     Nothing ->
                         [ div [] [ text "No speakers in queue yet." ] ]
                 )
                     ++ [ Html.button
-                            [ css [ buttonStyle ]
+                            ([ css [ buttonStyle ]
                             , onClick EnqueueClicked
-                            ]
+                            ]++ case timerState of
+                                Ended -> [Attributes.disabled True]
+                                _ -> []
+                            )
                             [ text "Enqueue" ]
                        ]
 
@@ -1706,11 +1740,24 @@ currentSpeakerView login current =
             getUserId login
 
         canModify speaker_ =
-            currentUserId
-                == speaker_.userId
-                || isAdminActiveForUser (Got login)
+            if
+                currentUserId
+                    == speaker_.userId
+                    || isAdminActiveForUser (Got login)
+            then
+                Modifiable
+
+            else
+                Invisible
+
+        contributionModification =
+            if canModify activeSpeaker == Modifiable && List.isEmpty current.questions.active then
+                Modifiable
+
+            else
+                Invisible
     in
-    speakerContributionView (canModify activeSpeaker && List.isEmpty current.questions.active)
+    speakerContributionView contributionModification
         (UnqueueClicked activeContributionId)
         "Done"
         activeSpeaker.name
@@ -1726,8 +1773,8 @@ currentSpeakerView login current =
            ]
 
 
-followUpSpeakersView : Login -> SpeakerList -> Html Msg
-followUpSpeakersView login followUpSpeakers =
+followUpSpeakersView : Login -> SpeakerList ->  TimerState -> Html Msg
+followUpSpeakersView login followUpSpeakers timerState =
     let
         -- TODO: Add a loading indicator for queueing speakers.
         followUps =
@@ -1748,10 +1795,22 @@ followUpSpeakersView login followUpSpeakers =
 
                 canModify =
                     currentUserId == speaker.userId
+
+                contributionModification =
+                    if canModify then
+                        case timerState of
+                            Ended ->
+                                Disabled
+
+                            _ ->
+                                Modifiable
+
+                    else
+                        Invisible
             in
             Html.li []
                 (speakerContributionView
-                    canModify
+                    contributionModification
                     (UnqueueClicked contributionId)
                     "Unqueue"
                     speaker.name
@@ -1801,19 +1860,40 @@ followUpSpeakersView login followUpSpeakers =
             Html.div [] [ Html.text "No more speakers yet." ]
 
 
-speakerContributionView : Bool -> Msg -> String -> String -> List (Html Msg)
-speakerContributionView canModify msg label speakerName =
-    text speakerName
-        :: (if canModify then
-                [ Html.button
-                    [ css [ buttonStyle, Css.marginLeft (rem 0.5) ]
-                    , onClick msg
-                    ]
-                    [ text label ]
-                ]
+type ContributionModification
+    = Invisible
+    | Modifiable
+    | Disabled
 
-            else
-                []
+
+speakerContributionView : ContributionModification -> Msg -> String -> String -> List (Html Msg)
+speakerContributionView contributionModification msg label speakerName =
+    text speakerName
+        :: (let
+                button disabled =
+                    Html.button
+                        ([ css [ buttonStyle, Css.marginLeft (rem 0.5) ]
+                         , onClick msg
+                         ]
+                            ++ (if disabled then
+                                    [ Attributes.disabled True ]
+
+                                else
+                                    []
+                               )
+                        )
+                        [ text label ]
+            in
+            case contributionModification of
+                Modifiable ->
+                    [ button False
+                    ]
+
+                Disabled ->
+                    [ button True ]
+
+                Invisible ->
+                    []
            )
 
 
