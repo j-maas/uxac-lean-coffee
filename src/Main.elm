@@ -1370,7 +1370,7 @@ discussionView remoteLogin maybeDiscussedTopic continuationVotes times timerInpu
         (h2 [ css [ Css.margin zero ] ] [ text "In discussion" ]
             :: (case maybeDiscussedTopic of
                     Just topic ->
-                        [ topicToDiscussCard topic
+                        [ topicToDiscussCard remoteLogin topic
                         ]
 
                     Nothing ->
@@ -2081,20 +2081,25 @@ sortButton =
     button [ css [ buttonStyle ], onClick SortTopics ] [ text "Sort" ]
 
 
-topicToDiscussCard : TopicWithVotes -> Html Msg
-topicToDiscussCard ( topicId, entry ) =
+topicToDiscussCard : Remote Login -> TopicWithVotes -> Html Msg
+topicToDiscussCard remoteUser ( topicId, entry ) =
     let
         voteCount =
             List.length entry.votes
 
         cardButtons =
-            [ votesIndicator voteCount
-            , button
-                [ css [ buttonStyle ]
-                , onClick MoveToDiscussedClicked
-                ]
-                [ text "Finish discussion" ]
-            ]
+            votesIndicator voteCount
+                :: (if isAdminActiveForUser remoteUser then
+                        [ button
+                            [ css [ buttonStyle ]
+                            , onClick MoveToDiscussedClicked
+                            ]
+                            [ text "Finish discussion" ]
+                        ]
+
+                    else
+                        []
+                   )
 
         toolbar =
             [ div [ css [ spaceChildren (Css.marginTop (rem 0.5)) ] ]
