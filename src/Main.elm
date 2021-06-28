@@ -1779,7 +1779,9 @@ speakerSectionView remoteLogin remoteSpeakers timerState =
                         ]
 
                     Nothing ->
-                        [ div [] [ text "No speakers in queue yet." ], enqueueButton ]
+                        [ div [ css [ textWithButtonStyle ] ]
+                            [ text "No speakers in queue yet.", enqueueButton ]
+                        ]
 
             _ ->
                 [ text "Loading speaker list…" ]
@@ -1830,6 +1832,16 @@ currentSpeakerView login current timerState =
         )
 
 
+textWithButtonStyle : Css.Style
+textWithButtonStyle =
+    Css.batch
+        [ Css.displayFlex
+        , Css.flexDirection Css.row
+        , Css.alignItems Css.center
+        , Css.property "gap" "1rem"
+        ]
+
+
 
 -- TODO: Remove enqueue button from parameters.
 
@@ -1860,11 +1872,7 @@ followUpSpeakersView login followUpSpeakers enqueueButton =
     if List.isEmpty followUps then
         Html.div
             [ css
-                [ Css.displayFlex
-                , Css.flexDirection Css.row
-                , Css.alignItems Css.center
-                , Css.property "gap" "1rem"
-                ]
+                [ textWithButtonStyle ]
             ]
             [ Html.div [] [ Html.text "No further speakers yet." ], enqueueButton ]
 
