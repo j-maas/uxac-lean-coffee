@@ -13,6 +13,7 @@ import Html.Styled.Events exposing (on, onClick, onInput, onMouseEnter, onSubmit
 import Json.Decode as Decode exposing (Decoder)
 import Json.Encode as Encode
 import List.Extra as List
+import QueuedList
 import Random
 import Remote exposing (Remote(..))
 import Set exposing (Set)
@@ -564,11 +565,46 @@ update msg model =
                     ( model, Cmd.none )
 
         CurrentSpeakerDoneClicked speakerContributionId ->
+            let
+                removeSpeakerCmd =
+                    Speakers.removeSpeakerContribution model.workspace speakerContributionId
+
+                startContinuationVoteCmd =
+                    startContinuationVote model.workspace
+
+                remoteSpeakers =
+                    Speakers.get model.userNames model.speakers
+
+                isLastSpeaker =
+                    Remote.toMaybe remoteSpeakers
+                        |> Maybe.andThen identity
+                        |> Maybe.map
+                            (\speakers ->
+                                QueuedList.isEmpty speakers.following
+                            )
+                        -- TODO: Report invalid state if we clicked on "Done" for the current speaker but there is no speaker.
+                        |> Maybe.withDefault False
+
+                timerEnded =
+                    case getTimerState { now = model.now, deadline = model.deadline } of
+                        Ended ->
+                            True
+
+                        _ ->
+                            False
+
+                cmds =
+                    if isLastSpeaker || timerEnded then
+                        Cmd.batch
+                            [ removeSpeakerCmd
+                            , startContinuationVoteCmd
+                            ]
+
+                    else
+                        removeSpeakerCmd
+            in
             ( model
-            , Cmd.batch
-                [ Speakers.removeSpeakerContribution model.workspace speakerContributionId
-                , startContinuationVote model.workspace
-                ]
+            , cmds
             )
 
         UnqueueClicked speakerContributionId ->
