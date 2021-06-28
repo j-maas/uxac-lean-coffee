@@ -1751,16 +1751,9 @@ speakerSectionView remoteLogin remoteSpeakers timerState =
         ]
         (case ( remoteLogin, remoteSpeakers ) of
             ( Got login, Got maybeSpeakers ) ->
-                (case maybeSpeakers of
-                    Just speakers ->
-                        [ div [] (currentSpeakerView login speakers.current timerState)
-                        , followUpSpeakersView login speakers.following
-                        ]
-
-                    Nothing ->
-                        [ div [] [ text "No speakers in queue yet." ] ]
-                )
-                    ++ [ Html.button
+                let
+                    enqueueButton =
+                        Html.button
                             ([ css [ buttonStyle ]
                              , onClick EnqueueClicked
                              ]
@@ -1773,14 +1766,27 @@ speakerSectionView remoteLogin remoteSpeakers timerState =
                                    )
                             )
                             [ text "Enqueue" ]
-                       ]
+                in
+                case maybeSpeakers of
+                    Just speakers ->
+                        [ Html.div
+                            [ css
+                                [ Css.marginBottom (rem 0.5)
+                                ]
+                            ]
+                            [ currentSpeakerView login speakers.current timerState ]
+                        , followUpSpeakersView login speakers.following enqueueButton
+                        ]
+
+                    Nothing ->
+                        [ div [] [ text "No speakers in queue yet." ], enqueueButton ]
 
             _ ->
                 [ text "Loading speaker list…" ]
         )
 
 
-currentSpeakerView : Login -> CurrentSpeaker -> TimerState -> List (Html Msg)
+currentSpeakerView : Login -> CurrentSpeaker -> TimerState -> Html Msg
 currentSpeakerView login current timerState =
     let
         ( activeContributionId, activeSpeaker ) =
@@ -1794,46 +1800,46 @@ currentSpeakerView login current timerState =
                 == speaker_.userId
                 || isAdminActiveForUser (Got login)
     in
-    speakerContributionView (canModify activeSpeaker && List.isEmpty current.questions.active)
-        (CurrentSpeakerDoneClicked activeContributionId)
-        "Done"
-        activeSpeaker.name
-        ++ [ Html.ol []
-                (List.map
-                    (\( questionId, asker ) ->
-                        Html.li []
-                            (speakerContributionView (canModify asker) (QuestionDoneClicked questionId) "Done" asker.name)
+    card
+        []
+        []
+        (speakerContributionView (canModify activeSpeaker && List.isEmpty current.questions.active)
+            (CurrentSpeakerDoneClicked activeContributionId)
+            "Done"
+            activeSpeaker.name
+            ++ [ Html.ol []
+                    (List.map
+                        (\( questionId, asker ) ->
+                            Html.li []
+                                (speakerContributionView (canModify asker) (QuestionDoneClicked questionId) "Done" asker.name)
+                        )
+                        current.questions.active
                     )
-                    current.questions.active
-                )
-           , Html.button
-                ([ css [ buttonStyle ], onClick AskQuestionClicked ]
-                    ++ (case timerState of
-                            Ended ->
-                                [ Attributes.disabled True ]
+               , Html.button
+                    ([ css [ buttonStyle ], onClick AskQuestionClicked ]
+                        ++ (case timerState of
+                                Ended ->
+                                    [ Attributes.disabled True ]
 
-                            _ ->
-                                []
-                       )
-                )
-                [ Html.text "Ask" ]
-           ]
+                                _ ->
+                                    []
+                           )
+                    )
+                    [ Html.text "Ask question" ]
+               ]
+        )
 
 
-followUpSpeakersView : Login -> SpeakerList -> Html Msg
-followUpSpeakersView login followUpSpeakers =
+
+-- TODO: Remove enqueue button from parameters.
+
+
+followUpSpeakersView : Login -> SpeakerList -> Html Msg -> Html Msg
+followUpSpeakersView login followUpSpeakers enqueueButton =
     let
         -- TODO: Add a loading indicator for queueing speakers.
         followUps =
             followUpSpeakers.active ++ followUpSpeakers.queueing
-
-        ( maybeFirst, rest ) =
-            case followUps of
-                first :: rest_ ->
-                    ( Just first, rest_ )
-
-                [] ->
-                    ( Nothing, [] )
 
         renderEntry ( contributionId, speaker ) =
             let
@@ -1851,48 +1857,30 @@ followUpSpeakersView login followUpSpeakers =
                     speaker.name
                 )
     in
-    case maybeFirst of
-        Just first ->
-            Html.details
-                []
-                [ Html.summary []
-                    ([ Html.text "Up next: "
-                     , Html.ol
-                        [ css
-                            [ Css.display Css.inlineBlock
-                            , Css.margin zero
-                            , Css.padding zero
-                            , Css.listStyle Css.none
-                            ]
-                        ]
-                        [ renderEntry first
-                        ]
-                     ]
-                        ++ (let
-                                restCount =
-                                    List.length rest
-                            in
-                            if restCount > 0 then
-                                [ Html.text (" (then " ++ String.fromInt (List.length rest) ++ " more)")
-                                ]
-
-                            else
-                                []
-                           )
-                    )
-                , Html.ol
-                    [ Attributes.start 2
-                    , css
-                        [ Css.margin zero
-                        , Css.marginTop (rem 0.5)
-                        , spaceChildren (Css.marginTop (rem 0.5))
-                        ]
-                    ]
-                    (List.map renderEntry followUps)
+    if List.isEmpty followUps then
+        Html.div
+            [ css
+                [ Css.displayFlex
+                , Css.flexDirection Css.row
+                , Css.alignItems Css.center
+                , Css.property "gap" "1rem"
                 ]
+            ]
+            [ Html.div [] [ Html.text "No further speakers yet." ], enqueueButton ]
 
-        Nothing ->
-            Html.div [] [ Html.text "No more speakers yet." ]
+    else
+        Html.div []
+            [ enqueueButton
+            , Html.ol
+                [ Attributes.start 2
+                , css
+                    [ Css.margin zero
+                    , Css.marginTop (rem 0.5)
+                    , spaceChildren (Css.marginTop (rem 0.5))
+                    ]
+                ]
+                (List.map renderEntry followUps)
+            ]
 
 
 speakerContributionView : Bool -> Msg -> String -> String -> List (Html Msg)
