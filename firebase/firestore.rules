@@ -26,6 +26,7 @@ service cloud.firestore {
 
       match /discussion/{doc} {
         allow read: if true;
+        allow write: if request.auth != null;
       }
 
       match /continuationVotes/{vote} {
