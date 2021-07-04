@@ -942,6 +942,18 @@ view model =
                 ++ [ topicEntry model.user model.newTopicInput ]
             )
         , topicsToVote model.user topicList (sortBarView model.votes model.topics)
+        , Html.details
+            [ css
+                [ Css.margin2 zero Css.auto
+                , Css.marginTop (rem 2)
+                , limitWidth
+                ]
+            ]
+            (Html.summary []
+                [ Html.text "Privacy Policy"
+                ]
+                :: privacyPolicyView
+            )
         ]
 
 
@@ -1090,10 +1102,8 @@ extract predicate list =
 settingsContainerView : Remote Login -> Maybe String -> UserNames.Store -> Html Msg
 settingsContainerView remoteUser maybeUserNameInput userNamesStore =
     Html.details [ css [ detailsStyle ] ]
-        [ Html.summary [] [ text "Settings & Privacy Policy" ]
+        [ Html.summary [] [ text "Settings" ]
         , settingsView [ Css.marginTop (rem 1) ] { user = remoteUser, userNameInput = maybeUserNameInput } userNamesStore
-        , Html.div [ css [ Css.marginTop (rem 2) ] ]
-            privacyPolicyView
         ]
 
 
@@ -1121,78 +1131,62 @@ settingsView styles model userNamesStore =
                 ++ styles
             )
         ]
-        (heading 2 "Settings"
-            :: (case ( model.user, userNamesStore ) of
-                    ( Got user, Got users ) ->
-                        let
-                            id =
-                                getUserId user
-                        in
-                        section
-                            [ heading 3 "Your name"
-                            , userNameInputView (getUserNameInput model.userNameInput id users)
-                            ]
-                            :: (case user of
-                                    AnonymousUser _ ->
-                                        [ section
-                                            [ heading 3 "Login"
-                                            , Html.p [] [ text ("Logged in anonymously as " ++ id ++ ".") ]
-                                            , Html.button
-                                                [ css [ buttonStyle ]
-                                                , onClick LogInWithGoogleClicked
-                                                ]
-                                                [ text "Log in via Google" ]
-                                            ]
+        (case ( model.user, userNamesStore ) of
+            ( Got user, Got users ) ->
+                let
+                    id =
+                        getUserId user
+                in
+                section
+                    [ heading 2 "Your name"
+                    , userNameInputView (getUserNameInput model.userNameInput id users)
+                    ]
+                    :: (case user of
+                            AnonymousUser _ ->
+                                [ section
+                                    [ heading 3 "Login"
+                                    , Html.p [] [ text ("Logged in anonymously as " ++ id ++ ".") ]
+                                    , Html.button
+                                        [ css [ buttonStyle ]
+                                        , onClick LogInWithGoogleClicked
                                         ]
+                                        [ text "Log in via Google" ]
+                                    ]
+                                ]
 
-                                    GoogleUser googleUser ->
-                                        let
-                                            settings =
-                                                if Remote.toMaybe googleUser.isAdmin |> Maybe.withDefault False then
-                                                    if isAdminActiveForUser model.user then
-                                                        [ Html.button [ css [ buttonStyle ], onClick (SetAdmin False) ] [ text "Deactivate admin" ] ]
+                            GoogleUser googleUser ->
+                                let
+                                    settings =
+                                        if Remote.toMaybe googleUser.isAdmin |> Maybe.withDefault False then
+                                            if isAdminActiveForUser model.user then
+                                                [ Html.button [ css [ buttonStyle ], onClick (SetAdmin False) ] [ text "Deactivate admin" ] ]
 
-                                                    else
-                                                        [ Html.button [ css [ buttonStyle ], onClick (SetAdmin True) ] [ text "Activate admin" ] ]
+                                            else
+                                                [ Html.button [ css [ buttonStyle ], onClick (SetAdmin True) ] [ text "Activate admin" ] ]
 
-                                                else
-                                                    [ Html.p [ css [ Css.fontStyle Css.italic ] ]
-                                                        [ text "You do not have moderator rights, so you cannot activate the moderator tools." ]
-                                                    , Html.p [ css [ Css.fontStyle Css.italic ] ]
-                                                        [ text "If you would like to become a moderator, ask someone who manages this app to add you to the list of moderators and tell them the email address you are logged in with."
-                                                        ]
-                                                    ]
-
-                                            logOutButton =
-                                                Html.button [ css [ buttonStyle ], onClick LogOutClicked ] [ text "Log out" ]
-                                        in
-                                        [ Html.div
-                                            [ css
-                                                [ Css.displayFlex
-                                                , Css.flexDirection Css.column
-                                                , Css.alignItems Css.start
-                                                , spaceChildrenAndP (Css.marginTop (rem 2))
+                                        else
+                                            [ Html.p [ css [ Css.fontStyle Css.italic ] ]
+                                                [ text "You do not have moderator rights, so you cannot activate the moderator tools." ]
+                                            , Html.p [ css [ Css.fontStyle Css.italic ] ]
+                                                [ text "If you would like to become a moderator, ask someone who manages this app to add you to the list of moderators and tell them the email address you are logged in with."
                                                 ]
                                             ]
-                                            (div
-                                                [ css
-                                                    [ Css.displayFlex
-                                                    , Css.flexDirection Css.column
-                                                    , Css.alignItems Css.start
-                                                    , spaceChildrenAndP (Css.marginTop (rem 0.5))
-                                                    ]
-                                                ]
-                                                [ Html.p [] [ text ("Logged in via Google as " ++ googleUser.email ++ ".") ]
-                                                , logOutButton
-                                                ]
-                                                :: settings
-                                            )
-                                        ]
-                               )
 
-                    _ ->
-                        [ Html.p [] [ text "Connecting…" ] ]
-               )
+                                    logOutButton =
+                                        Html.button [ css [ buttonStyle ], onClick LogOutClicked ] [ text "Log out" ]
+                                in
+                                [ section
+                                    ([ heading 3 "Login"
+                                     , Html.p [] [ text ("Logged in via Google as " ++ googleUser.email ++ ".") ]
+                                     , logOutButton
+                                     ]
+                                        ++ settings
+                                    )
+                                ]
+                       )
+
+            _ ->
+                [ Html.p [] [ text "Connecting…" ] ]
         )
 
 
@@ -1308,8 +1302,7 @@ fieldContainerStyle =
 
 privacyPolicyView : List (Html Msg)
 privacyPolicyView =
-    [ heading 2 "Privacy Policy"
-    , Html.p [] [ Html.text "We use ", Html.a [ Attributes.href "https://firebase.google.com/" ] [ Html.text "Google Firebase" ], Html.text ". Specifically, we use its Authentication, Cloud Firestore and Hosting services. You can read their ", Html.a [ Attributes.href "https://firebase.google.com/terms/" ] [ Html.text "Terms of Service" ], Html.text ", their ", Html.a [ Attributes.href "https://firebase.google.com/terms/data-processing-terms" ] [ Html.text "Data Processing and Security Terms" ], Html.text ", and their support page on ", Html.a [ Attributes.href "https://firebase.google.com/support/privacy" ] [ Html.text "Privacy and Security" ], Html.text "." ]
+    [ Html.p [] [ Html.text "We use ", Html.a [ Attributes.href "https://firebase.google.com/" ] [ Html.text "Google Firebase" ], Html.text ". Specifically, we use its Authentication, Cloud Firestore and Hosting services. You can read their ", Html.a [ Attributes.href "https://firebase.google.com/terms/" ] [ Html.text "Terms of Service" ], Html.text ", their ", Html.a [ Attributes.href "https://firebase.google.com/terms/data-processing-terms" ] [ Html.text "Data Processing and Security Terms" ], Html.text ", and their support page on ", Html.a [ Attributes.href "https://firebase.google.com/support/privacy" ] [ Html.text "Privacy and Security" ], Html.text "." ]
     , Html.p []
         [ Html.text "When you open the app, we log you in using Firebase Authentication with an anonymous account to authenticate you. You can also optionally log in with a Google account so that we can give you moderator rights. This helps us ensure that only you can edit your topics and only admins can moderate the discussion."
         ]
