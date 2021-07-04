@@ -1795,7 +1795,7 @@ speakerSectionView remoteLogin remoteSpeakers timerState =
 
                     Nothing ->
                         [ div [ css [ textWithButtonStyle ] ]
-                            [ text "No speakers in queue yet.", enqueueButton maybeSpeakers.queueing ]
+                            [ enqueueButton maybeSpeakers.queueing, text "No speakers in queue yet." ]
                         ]
 
             _ ->
@@ -1956,7 +1956,7 @@ followUpSpeakersView login followUpSpeakers enqueueButton =
             [ css
                 [ textWithButtonStyle ]
             ]
-            [ Html.div [] [ Html.text "No further speakers yet." ], enqueueButton ]
+            [ enqueueButton, Html.div [] [ Html.text "No further speakers yet." ] ]
 
     else
         Html.div []
