@@ -6,6 +6,7 @@ import Css exposing (auto, num, pct, px, rem, zero)
 import Css.Animations as Animations
 import Css.Global as Global
 import Css.Media as Media
+import Css.Transitions as Transitions
 import Dict exposing (Dict)
 import Html.Styled as Html exposing (Attribute, Html, button, div, h1, h2, img, li, ol, span, text, textarea)
 import Html.Styled.Attributes as Attributes exposing (css, src, type_, value)
@@ -18,7 +19,7 @@ import Random
 import Remote exposing (Remote(..))
 import Set exposing (Set)
 import SortedDict exposing (SortedDict)
-import Speakers exposing (ContributionId, CurrentSpeaker, SpeakerList, Speakers)
+import Speakers exposing (ContributionId, CurrentSpeaker, SpeakerList, Speakers, SpeakersQueue)
 import Store exposing (..)
 import Time
 import UUID
@@ -577,10 +578,10 @@ update msg model =
 
                 isLastSpeaker =
                     Remote.toMaybe remoteSpeakers
-                        |> Maybe.andThen identity
+                        |> Maybe.andThen .speakers
                         |> Maybe.map
                             (\speakers ->
-                                QueuedList.isEmpty speakers.following
+                                List.isEmpty speakers.following
                             )
                         -- TODO: Report invalid state if we clicked on "Done" for the current speaker but there is no speaker.
                         |> Maybe.withDefault False
@@ -1392,7 +1393,7 @@ discussionView :
     -> Maybe (List ContinuationVote)
     -> { b | now : Maybe Time.Posix, deadline : Maybe Time.Posix }
     -> String
-    -> Remote (Maybe Speakers)
+    -> Remote SpeakersQueue
     -> Html Msg
 discussionView remoteLogin maybeDiscussedTopic continuationVotes times timerInput remoteSpeakers =
     div
@@ -1742,7 +1743,7 @@ continuationVoteButtons user continuationVotes =
         [ stayButton, abstainButton, moveOnButton ]
 
 
-speakerSectionView : Remote Login -> Remote (Maybe Speakers) -> TimerState -> Html Msg
+speakerSectionView : Remote Login -> Remote SpeakersQueue -> TimerState -> Html Msg
 speakerSectionView remoteLogin remoteSpeakers timerState =
     Html.div
         [ css
@@ -1752,22 +1753,36 @@ speakerSectionView remoteLogin remoteSpeakers timerState =
         (case ( remoteLogin, remoteSpeakers ) of
             ( Got login, Got maybeSpeakers ) ->
                 let
-                    enqueueButton =
+                    enqueueButton : Bool -> Html Msg
+                    enqueueButton queueing =
+                        let
+                            timerEnded =
+                                case timerState of
+                                    Ended ->
+                                        True
+
+                                    _ ->
+                                        False
+
+                            disabled =
+                                if timerEnded || queueing then
+                                    [ Attributes.disabled True ]
+
+                                else
+                                    []
+                        in
                         Html.button
-                            ([ css [ buttonStyle ]
+                            ([ css
+                                [ buttonStyle
+                                , loadingIndicator queueing
+                                ]
                              , onClick EnqueueClicked
                              ]
-                                ++ (case timerState of
-                                        Ended ->
-                                            [ Attributes.disabled True ]
-
-                                        _ ->
-                                            []
-                                   )
+                                ++ disabled
                             )
                             [ text "Enqueue" ]
                 in
-                case maybeSpeakers of
+                case maybeSpeakers.speakers of
                     Just speakers ->
                         [ Html.div
                             [ css
@@ -1775,17 +1790,75 @@ speakerSectionView remoteLogin remoteSpeakers timerState =
                                 ]
                             ]
                             [ currentSpeakerView login speakers.current timerState ]
-                        , followUpSpeakersView login speakers.following enqueueButton
+                        , followUpSpeakersView login speakers.following (enqueueButton maybeSpeakers.queueing)
                         ]
 
                     Nothing ->
                         [ div [ css [ textWithButtonStyle ] ]
-                            [ text "No speakers in queue yet.", enqueueButton ]
+                            [ text "No speakers in queue yet.", enqueueButton maybeSpeakers.queueing ]
                         ]
 
             _ ->
                 [ text "Loading speaker list…" ]
         )
+
+
+loadingIndicator : Bool -> Css.Style
+loadingIndicator active =
+    let
+        borderColor =
+            Css.hsla 0 0 0 0.5
+    in
+    Css.batch
+        [ Css.after
+            ([ Css.property "content" "\" \""
+             , Css.display Css.inlineBlock
+             , Css.height (rem 0.4)
+             , Css.borderStyle Css.solid
+             , Css.borderRadius (pct 50)
+             , Css.borderColor borderColor
+             , Css.borderRightColor Css.transparent
+             , Css.animationName
+                (Animations.keyframes
+                    [ ( 0, [ Animations.transform [ Css.rotate (Css.deg 0) ] ] )
+                    , ( 100, [ Animations.transform [ Css.rotate (Css.deg 360) ] ] )
+                    ]
+                )
+             , Css.animationDuration (Css.sec 1)
+             , Css.property "animation-timing-function" "linear"
+             , Css.property "animation-iteration-count" "infinite"
+             ]
+                ++ (if active then
+                        let
+                            duration =
+                                500
+
+                            delay =
+                                500
+                        in
+                        [ Css.width (rem 0.4)
+                        , Css.height (rem 0.4)
+                        , Css.opacity (num 1)
+                        , Css.marginLeft (rem 0.25)
+                        , Css.borderWidth (rem 0.15)
+                        , Transitions.transition
+                            [ Transitions.opacity2 duration delay
+                            , Transitions.width2 duration delay
+                            , Transitions.margin2 duration delay
+                            , Transitions.borderWidth2 duration delay
+                            ]
+                        ]
+
+                    else
+                        [ Css.width Css.zero
+                        , Css.height Css.zero
+                        , Css.opacity Css.zero
+                        , Css.marginLeft Css.zero
+                        , Css.borderWidth Css.zero
+                        ]
+                   )
+            )
+        ]
 
 
 currentSpeakerView : Login -> CurrentSpeaker -> TimerState -> Html Msg
@@ -1801,11 +1874,26 @@ currentSpeakerView login current timerState =
             currentUserId
                 == speaker_.userId
                 || isAdminActiveForUser (Got login)
+
+        timerEnded =
+            case timerState of
+                Ended ->
+                    True
+
+                _ ->
+                    False
+
+        disabled =
+            if timerEnded || current.questionsQueueing then
+                [ Attributes.disabled True ]
+
+            else
+                []
     in
     card
         []
         []
-        (speakerContributionView (canModify activeSpeaker && List.isEmpty current.questions.active)
+        (speakerContributionView (canModify activeSpeaker && List.isEmpty current.questions)
             (CurrentSpeakerDoneClicked activeContributionId)
             "Done"
             activeSpeaker.name
@@ -1815,17 +1903,11 @@ currentSpeakerView login current timerState =
                             Html.li []
                                 (speakerContributionView (canModify asker) (QuestionDoneClicked questionId) "Done" asker.name)
                         )
-                        current.questions.active
+                        current.questions
                     )
                , Html.button
-                    ([ css [ buttonStyle ], onClick AskQuestionClicked ]
-                        ++ (case timerState of
-                                Ended ->
-                                    [ Attributes.disabled True ]
-
-                                _ ->
-                                    []
-                           )
+                    ([ css [ buttonStyle, loadingIndicator current.questionsQueueing ], onClick AskQuestionClicked ]
+                        ++ disabled
                     )
                     [ Html.text "Ask question" ]
                ]
@@ -1851,7 +1933,7 @@ followUpSpeakersView login followUpSpeakers enqueueButton =
     let
         -- TODO: Add a loading indicator for queueing speakers.
         followUps =
-            followUpSpeakers.active ++ followUpSpeakers.queueing
+            followUpSpeakers
 
         renderEntry ( contributionId, speaker ) =
             let

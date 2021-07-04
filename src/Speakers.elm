@@ -1,4 +1,4 @@
-module Speakers exposing (ContributionId, CurrentSpeaker, DecodedSpeakers, Speaker, SpeakerEntry, SpeakerList, Speakers, Store, ask, clearAll, enqueue, get, loading, questionCollectionPath, removeQuestion, removeSpeakerContribution, speakerCollectionPath, speakersDecoder, updateQuestions, updateSpeakers)
+module Speakers exposing (ContributionId, CurrentSpeaker, DecodedSpeakers, Speaker, SpeakerEntry, SpeakerList, Speakers, SpeakersQueue, Store, ask, clearAll, enqueue, get, loading, questionCollectionPath, removeQuestion, removeSpeakerContribution, speakerCollectionPath, speakersDecoder, updateQuestions, updateSpeakers)
 
 import Dict
 import Json.Decode as Decode exposing (Decoder)
@@ -10,6 +10,12 @@ import Time
 import UserNames exposing (UserId)
 
 
+type alias SpeakersQueue =
+    { speakers : Maybe Speakers
+    , queueing : Bool
+    }
+
+
 type alias Speakers =
     { current : CurrentSpeaker
     , following : SpeakerList
@@ -19,11 +25,12 @@ type alias Speakers =
 type alias CurrentSpeaker =
     { speaker : SpeakerEntry
     , questions : SpeakerList
+    , questionsQueueing : Bool
     }
 
 
 type alias SpeakerList =
-    QueuedList SpeakerEntry
+    List SpeakerEntry
 
 
 type alias SpeakerEntry =
@@ -89,7 +96,7 @@ loading =
         }
 
 
-get : UserNames.Store -> Store -> Remote (Maybe Speakers)
+get : UserNames.Store -> Store -> Remote SpeakersQueue
 get userStore (Store store) =
     Got
         (\userNames rawSpeakers rawQuestions ->
@@ -100,28 +107,29 @@ get userStore (Store store) =
                 questions =
                     mapToSpeakerList userNames rawQuestions
             in
-            case speakers.active of
-                current :: following ->
-                    Just
-                        { current =
-                            { speaker = current
-                            , questions = questions
+            { speakers =
+                case speakers.active of
+                    current :: following ->
+                        Just
+                            { current =
+                                { speaker = current
+                                , questions = questions.active
+                                , questionsQueueing = not (List.isEmpty questions.queueing)
+                                }
+                            , following = following
                             }
-                        , following =
-                            { active = following
-                            , queueing = speakers.queueing
-                            }
-                        }
 
-                [] ->
-                    Nothing
+                    [] ->
+                        Nothing
+            , queueing = not (List.isEmpty speakers.queueing)
+            }
         )
         |> Remote.andMap userStore
         |> Remote.andMap store.speakers
         |> Remote.andMap store.questions
 
 
-mapToSpeakerList : UserNames.UserNames -> DecodedSpeakers -> SpeakerList
+mapToSpeakerList : UserNames.UserNames -> DecodedSpeakers -> QueuedList SpeakerEntry
 mapToSpeakerList userNames rawSpeakers =
     rawSpeakers
         -- TODO: Do not ignore nameless speakers, show them to the user.
