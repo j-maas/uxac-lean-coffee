@@ -14,12 +14,11 @@ import Html.Styled.Events exposing (on, onClick, onInput, onMouseEnter, onSubmit
 import Json.Decode as Decode exposing (Decoder)
 import Json.Encode as Encode
 import List.Extra as List
-import QueuedList
 import Random
 import Remote exposing (Remote(..))
 import Set exposing (Set)
 import SortedDict exposing (SortedDict)
-import Speakers exposing (ContributionId, CurrentSpeaker, SpeakerList, Speakers, SpeakersQueue)
+import Speakers exposing (ContributionId, CurrentSpeaker, SpeakerList, SpeakersQueue)
 import Store exposing (..)
 import Time
 import UUID
