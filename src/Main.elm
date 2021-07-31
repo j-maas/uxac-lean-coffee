@@ -1314,6 +1314,7 @@ userNameInputForm input maybeHint =
                 ++ [ Html.input
                         [ value input
                         , onInput UserNameChanged
+                        , Attributes.required True
                         , css
                             [ inputStyle
                             , Css.marginTop (rem 0.3)
