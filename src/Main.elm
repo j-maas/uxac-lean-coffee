@@ -1100,10 +1100,37 @@ extract predicate list =
 
 settingsContainerView : Remote Login -> Maybe String -> UserNames.Store -> Html Msg
 settingsContainerView remoteUser maybeUserNameInput userNamesStore =
-    Html.details [ css [ detailsStyle ] ]
+    let
+        maybeOpen =
+            if currentUserHasName remoteUser userNamesStore then
+                []
+
+            else
+                [ Attributes.attribute "open" "true" ]
+    in
+    Html.details (css [ detailsStyle ] :: maybeOpen)
         [ Html.summary [] [ text "Settings" ]
         , settingsView [ Css.marginTop (rem 1) ] { user = remoteUser, userNameInput = maybeUserNameInput } userNamesStore
         ]
+
+
+currentUserHasName : Remote Login -> UserNames.Store -> Bool
+currentUserHasName remoteUser userNamesStore =
+    case ( remoteUser, userNamesStore ) of
+        ( Got user, Got userNames ) ->
+            let
+                id =
+                    getUserId user
+            in
+            case Dict.get id userNames of
+                Just _ ->
+                    True
+
+                Nothing ->
+                    False
+
+        _ ->
+            True
 
 
 settingsView : List Css.Style -> { a | user : Remote Login, userNameInput : Maybe String } -> UserNames.Store -> Html Msg
@@ -1265,6 +1292,17 @@ userNameInputForm input maybeHint =
                     [ Html.span
                         [ css
                             [ Css.fontStyle Css.italic
+                            , Css.position Css.relative
+                            , Css.before
+                                [ Css.property "content" "\"\""
+                                , Css.width (rem 0.4)
+                                , Css.height (pct 100)
+                                , Css.position Css.absolute
+                                , Css.left (rem -1.2)
+                                , Css.top zero
+                                , Css.borderRadius (rem 0.1)
+                                , Css.backgroundColor (Css.hsl 0 0.8 0.6)
+                                ]
                             ]
                         ]
                         [ text hint ]
