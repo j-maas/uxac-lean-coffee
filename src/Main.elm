@@ -918,7 +918,7 @@ view model =
                 , listItemSpacing
                 ]
             ]
-            ([ div
+            (div
                 [ css
                     [ Css.displayFlex
                     , Css.flexDirection Css.row
@@ -928,9 +928,7 @@ view model =
                 [ logo
                 , h1 [ css [ Css.margin zero ] ] [ text headingText ]
                 ]
-             , settingsContainerView model.user model.userNameInput model.userNames
-             ]
-                ++ errorView model.error
+                :: errorView model.error
                 ++ discussionView model.user
                     inDiscussion
                     continuationVotes
@@ -941,18 +939,26 @@ view model =
                 ++ [ topicEntry model.user model.newTopicInput ]
             )
         , topicsToVote model.user topicList (sortBarView model.votes model.topics)
-        , Html.details
+        , div
             [ css
-                [ Css.margin2 zero Css.auto
+                [ limitWidth
                 , Css.marginTop (rem 2)
-                , limitWidth
+                , spaceChildren (Css.marginTop (rem 1))
                 ]
             ]
-            (Html.summary []
-                [ Html.text "Privacy Policy"
+            [ settingsContainerView model.user model.userNameInput model.userNames
+            , Html.details
+                [ css
+                    [ Css.margin2 zero Css.auto
+                    , limitWidth
+                    ]
                 ]
-                :: privacyPolicyView
-            )
+                (Html.summary []
+                    [ Html.text "Privacy Policy"
+                    ]
+                    :: privacyPolicyView
+                )
+            ]
         ]
 
 
@@ -1108,7 +1114,7 @@ settingsContainerView remoteUser maybeUserNameInput userNamesStore =
             else
                 [ Attributes.attribute "open" "true" ]
     in
-    Html.details (css [ detailsStyle ] :: maybeOpen)
+    Html.details maybeOpen
         [ Html.summary [] [ text "Settings" ]
         , settingsView [ Css.marginTop (rem 1) ] { user = remoteUser, userNameInput = maybeUserNameInput } userNamesStore
         ]
