@@ -942,15 +942,15 @@ view model =
         , div
             [ css
                 [ limitWidth
-                , Css.marginTop (rem 2)
+                , Css.marginTop (rem 4)
                 , spaceChildren (Css.marginTop (rem 1))
                 ]
             ]
             [ settingsContainerView model.user model.userNameInput model.userNames
             , Html.details
                 [ css
-                    [ Css.margin2 zero Css.auto
-                    , limitWidth
+                    [ limitWidth
+                    , detailsStyle
                     ]
                 ]
                 (Html.summary []
@@ -1114,7 +1114,7 @@ settingsContainerView remoteUser maybeUserNameInput userNamesStore =
             else
                 [ Attributes.attribute "open" "true" ]
     in
-    Html.details maybeOpen
+    Html.details (css [ detailsStyle ] :: maybeOpen)
         [ Html.summary [] [ text "Settings" ]
         , settingsView [ Css.marginTop (rem 1) ] { user = remoteUser, userNameInput = maybeUserNameInput } userNamesStore
         ]
