@@ -1,6 +1,7 @@
-module Speakers exposing (ContributionId, CurrentSpeaker, DecodedSpeakers, Speaker, SpeakerEntry, SpeakerList, Speakers, SpeakersQueue, Store, ask, clearAll, enqueue, get, loading, questionCollectionPath, removeQuestion, removeSpeakerContribution, speakerCollectionPath, speakersDecoder, updateQuestions, updateSpeakers)
+module Speakers exposing (ContributionId, CurrentSpeaker, DecodedSpeakers, Speaker, SpeakerEntry, SpeakerList, Speakers, SpeakersQueue, Store, ask, clearAll, enqueue, get, loading, questionCollectionPath, removeQuestion, removeSpeakerContribution, speakerCollectionPath, speakersDecoder, updateQuestions, updateSpeakers, displayName)
 
 import Dict
+import HumanReadableId
 import Json.Decode as Decode exposing (Decoder)
 import Json.Encode as Encode
 import QueuedList exposing (QueuedList)
@@ -43,8 +44,18 @@ type alias ContributionId =
 
 type alias Speaker =
     { userId : UserId
-    , name : String
+    , name : Maybe String
     }
+
+
+displayName : Speaker -> String
+displayName speaker =
+    case speaker.name of
+        Just name ->
+            name
+
+        Nothing ->
+            HumanReadableId.humanize speaker.userId
 
 
 enqueue : Store.Workspace -> Store.TimestampField -> UserId -> Cmd msg
@@ -132,14 +143,14 @@ get userStore (Store store) =
 mapToSpeakerList : UserNames.UserNames -> DecodedSpeakers -> QueuedList SpeakerEntry
 mapToSpeakerList userNames rawSpeakers =
     rawSpeakers
-        -- TODO: Do not ignore nameless speakers, show them to the user.
-        |> QueuedList.filterMap
+        |> QueuedList.map
             (\( contributionId, userId ) ->
-                Dict.get userId userNames
-                    |> Maybe.map
-                        (\name ->
-                            ( contributionId, { userId = userId, name = name } )
-                        )
+                ( contributionId
+                , { userId = userId
+                  , name =
+                        Dict.get userId userNames
+                  }
+                )
             )
 
 

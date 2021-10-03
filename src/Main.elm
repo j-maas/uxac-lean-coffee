@@ -1933,12 +1933,12 @@ currentSpeakerView login current timerState =
         (speakerContributionView (canModify activeSpeaker && List.isEmpty current.questions)
             (CurrentSpeakerDoneClicked activeContributionId)
             "Done"
-            activeSpeaker.name
+            (Speakers.displayName activeSpeaker)
             ++ [ Html.ol []
                     (List.map
                         (\( questionId, asker ) ->
                             Html.li []
-                                (speakerContributionView (canModify asker) (QuestionDoneClicked questionId) "Done" asker.name)
+                                (speakerContributionView (canModify asker) (QuestionDoneClicked questionId) "Done" (Speakers.displayName asker))
                         )
                         current.questions
                     )
@@ -1968,7 +1968,6 @@ textWithButtonStyle =
 followUpSpeakersView : Login -> SpeakerList -> Html Msg -> Html Msg
 followUpSpeakersView login followUpSpeakers enqueueButton =
     let
-        -- TODO: Add a loading indicator for queueing speakers.
         followUps =
             followUpSpeakers
 
@@ -1985,7 +1984,7 @@ followUpSpeakersView login followUpSpeakers enqueueButton =
                     canModify
                     (UnqueueClicked contributionId)
                     "Unqueue"
-                    speaker.name
+                    (Speakers.displayName speaker)
                 )
     in
     if List.isEmpty followUps then
