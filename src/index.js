@@ -23,9 +23,10 @@ const auth = firebase.auth();
 
 // Potentially connect to emulator.
 if (process.env.NODE_ENV === "development") {
-  console.log("Using emulators.");
-  db.useEmulator("localhost", 8080);
-  auth.useEmulator("http://localhost:9099");
+  const host = location.hostname;
+  console.log(`Using emulators on ${host}.`);
+  db.useEmulator(host, 8080);
+  auth.useEmulator(`http://${host}:9099`, { disableWarnings: true });
 }
 
 var randomValues = new Int32Array(4);
