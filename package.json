@@ -14,7 +14,8 @@
   },
   "scripts": {
     "build": "elm-app build",
-    "start": "concurrently npm:start:firebase \"cross-env NODE_ENV=development elm-app start --no-browser\"",
+    "start": "concurrently npm:start:*",
+    "start:elm": "cross-env DISCUSSION_BOARD_MODE=development elm-app start --no-browser",
     "start:firebase": "firebase emulators:start --export-on-exit=firebase/state --import firebase/state",
     "test": "elm-app test"
   }

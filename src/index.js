@@ -22,7 +22,7 @@ const db = firebase.firestore();
 const auth = firebase.auth();
 
 // Potentially connect to emulator.
-if (process.env.NODE_ENV === "development") {
+if (process.env.DISCUSSION_BOARD_MODE === "development") {
   const host = location.hostname;
   console.log(`Using emulators on ${host}.`);
   db.useEmulator(host, 8080);
