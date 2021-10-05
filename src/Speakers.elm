@@ -1,4 +1,4 @@
-module Speakers exposing (ContributionId, CurrentSpeaker, DecodedSpeakers, Speaker, SpeakerEntry, SpeakerList, Speakers, SpeakersQueue, Store, ask, clearAll, enqueue, get, loading, questionCollectionPath, removeQuestion, removeSpeakerContribution, speakerCollectionPath, speakersDecoder, updateQuestions, updateSpeakers, displayName)
+module Speakers exposing (ContributionId, CurrentSpeaker, DecodedSpeakers, Speaker, SpeakerEntry, SpeakerList, SpeakerName(..), Speakers, SpeakersQueue, Store, ask, clearAll, displayName, enqueue, get, loading, questionCollectionPath, removeQuestion, removeSpeakerContribution, speakerCollectionPath, speakersDecoder, updateQuestions, updateSpeakers)
 
 import Dict
 import HumanReadableId
@@ -48,14 +48,19 @@ type alias Speaker =
     }
 
 
-displayName : Speaker -> String
+type SpeakerName
+    = CustomName String
+    | GeneratedName String
+
+
+displayName : Speaker -> SpeakerName
 displayName speaker =
     case speaker.name of
         Just name ->
-            name
+            CustomName name
 
         Nothing ->
-            HumanReadableId.humanize speaker.userId
+            GeneratedName (HumanReadableId.humanize speaker.userId)
 
 
 enqueue : Store.Workspace -> Store.TimestampField -> UserId -> Cmd msg

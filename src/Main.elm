@@ -18,7 +18,7 @@ import Random
 import Remote exposing (Remote(..))
 import Set exposing (Set)
 import SortedDict exposing (SortedDict)
-import Speakers exposing (ContributionId, CurrentSpeaker, SpeakerList, SpeakersQueue)
+import Speakers exposing (ContributionId, CurrentSpeaker, SpeakerList, SpeakerName(..), SpeakersQueue)
 import Store exposing (..)
 import Time
 import UUID
@@ -2009,9 +2009,18 @@ followUpSpeakersView login followUpSpeakers enqueueButton =
             ]
 
 
-speakerContributionView : Bool -> Msg -> String -> String -> List (Html Msg)
+speakerContributionView : Bool -> Msg -> String -> SpeakerName -> List (Html Msg)
 speakerContributionView canModify msg label speakerName =
-    text speakerName
+    let
+        name =
+            case speakerName of
+                CustomName n ->
+                    text n
+
+                GeneratedName n ->
+                    span [ css [ Css.fontStyle Css.italic ] ] [ text n ]
+    in
+    name
         :: (if canModify then
                 [ Html.button
                     [ css [ buttonStyle, Css.marginLeft (rem 0.5) ]
