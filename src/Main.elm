@@ -22,7 +22,7 @@ import Speakers exposing (ContributionId, CurrentSpeaker, SpeakerList, SpeakerNa
 import Store exposing (..)
 import Time
 import UUID
-import UserNames exposing (UserId, UserNames)
+import UserNames exposing (UserId, UserNameEntry(..), UserNames)
 
 
 main : Program Flags Model Msg
@@ -78,7 +78,7 @@ type alias TopicId =
 
 type alias Topic =
     { topic : String
-    , creator : String
+    , creator : UserId
     , createdAt : Maybe Time.Posix
     }
 
@@ -534,14 +534,17 @@ update msg model =
         ChangeUserNameClicked ->
             let
                 userName =
-                    (case ( model.user, model.userNames ) of
+                    case ( model.user, model.userNames ) of
                         ( Got user, Got users ) ->
-                            Dict.get (getUserId user) users
+                            case UserNames.get (getUserId user) users |> UserNames.extractName of
+                                Just name ->
+                                    name
+
+                                Nothing ->
+                                    ""
 
                         _ ->
-                            Nothing
-                    )
-                        |> Maybe.withDefault ""
+                            ""
             in
             ( { model | userNameInput = Just userName }, Cmd.none )
 
@@ -1128,7 +1131,7 @@ currentUserHasName remoteUser userNamesStore =
                 id =
                     getUserId user
             in
-            case Dict.get id userNames of
+            case UserNames.get id userNames |> UserNames.extractName of
                 Just _ ->
                     True
 
@@ -1236,27 +1239,35 @@ spaceChildrenAndP style =
 
 type UserNameInput
     = UserName String
-    | Input String
-    | Missing String
+    | Input String UserNameWarning
+
+
+type UserNameWarning
+    = NoWarning
+    | MissingWarning
+    | CollisionWarning
 
 
 getUserNameInput : Maybe String -> UserId -> UserNames -> UserNameInput
 getUserNameInput maybeInput userId users =
     let
         loggedInUserName =
-            Dict.get userId users
+            UserNames.get userId users
     in
     case loggedInUserName of
-        Just userName ->
+        UniqueName name ->
             case maybeInput of
                 Just input ->
-                    Input input
+                    Input input NoWarning
 
                 Nothing ->
-                    UserName userName
+                    UserName name
 
-        Nothing ->
-            Missing (maybeInput |> Maybe.withDefault "")
+        NameCollision name _ ->
+            Input (maybeInput |> Maybe.withDefault name) CollisionWarning
+
+        MissingName ->
+            Input (maybeInput |> Maybe.withDefault "") MissingWarning
 
 
 userNameInputView : UserNameInput -> Html Msg
@@ -1275,11 +1286,14 @@ userNameInputView userNameInputValue =
                 , Html.button [ css [ buttonStyle ], onClick ChangeUserNameClicked ] [ text "Change" ]
                 ]
 
-        Input input ->
+        Input input NoWarning ->
             userNameInputForm input Nothing
 
-        Missing input ->
+        Input input MissingWarning ->
             userNameInputForm input (Just "Please enter a name so that others can recognize you in the speaker list.")
+
+        Input input CollisionWarning ->
+            userNameInputForm input (Just "Someone else is using the same name. Can you make yours unique?")
 
 
 userNameInputForm : String -> Maybe String -> Html Msg

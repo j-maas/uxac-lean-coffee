@@ -1,6 +1,5 @@
 module Speakers exposing (ContributionId, CurrentSpeaker, DecodedSpeakers, Speaker, SpeakerEntry, SpeakerList, SpeakerName(..), Speakers, SpeakersQueue, Store, ask, clearAll, displayName, enqueue, get, loading, questionCollectionPath, removeQuestion, removeSpeakerContribution, speakerCollectionPath, speakersDecoder, updateQuestions, updateSpeakers)
 
-import Dict
 import HumanReadableId
 import Json.Decode as Decode exposing (Decoder)
 import Json.Encode as Encode
@@ -8,7 +7,7 @@ import QueuedList exposing (QueuedList)
 import Remote exposing (Remote(..))
 import Store
 import Time
-import UserNames exposing (UserId)
+import UserNames exposing (UserId, UserNameEntry(..))
 
 
 type alias SpeakersQueue =
@@ -44,7 +43,7 @@ type alias ContributionId =
 
 type alias Speaker =
     { userId : UserId
-    , name : Maybe String
+    , name : UserNameEntry
     }
 
 
@@ -56,10 +55,13 @@ type SpeakerName
 displayName : Speaker -> SpeakerName
 displayName speaker =
     case speaker.name of
-        Just name ->
+        UniqueName name ->
             CustomName name
 
-        Nothing ->
+        NameCollision name _ ->
+            CustomName name
+
+        MissingName ->
             GeneratedName (HumanReadableId.humanize speaker.userId)
 
 
@@ -153,7 +155,7 @@ mapToSpeakerList userNames rawSpeakers =
                 ( contributionId
                 , { userId = userId
                   , name =
-                        Dict.get userId userNames
+                        UserNames.get userId userNames
                   }
                 )
             )
