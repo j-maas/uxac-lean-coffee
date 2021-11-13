@@ -938,6 +938,8 @@ view model =
                     model
                     model.timerInput
                     (Speakers.get model.userNames model.speakers)
+                    model.userNameInput
+                    model.userNames
                 :: discussedTopics model.user discussedList
                 ++ [ topicEntry model.user model.newTopicInput ]
             )
@@ -1445,8 +1447,33 @@ discussionView :
     -> { b | now : Maybe Time.Posix, deadline : Maybe Time.Posix }
     -> String
     -> Remote SpeakersQueue
+    -> Maybe String
+    -> UserNames.Store
     -> Html Msg
-discussionView remoteLogin maybeDiscussedTopic continuationVotes times timerInput remoteSpeakers =
+discussionView remoteLogin maybeDiscussedTopic continuationVotes times timerInput remoteSpeakers maybeUserNameInput userNamesStore =
+    let
+        userNameInput =
+            case ( remoteLogin, userNamesStore ) of
+                ( Got user, Got userNames ) ->
+                    let
+                        userNameInputValue =
+                            getUserNameInput maybeUserNameInput (getUserId user) userNames
+                    in
+                    case userNameInputValue of
+                        Input _ MissingWarning ->
+                            [ userNameInputView userNameInputValue
+                            ]
+
+                        Input _ CollisionWarning ->
+                            [ userNameInputView userNameInputValue
+                            ]
+
+                        _ ->
+                            []
+
+                _ ->
+                    []
+    in
     div
         [ css
             [ borderRadius
@@ -1481,7 +1508,8 @@ discussionView remoteLogin maybeDiscussedTopic continuationVotes times timerInpu
                )
             ++ remainingTime remoteLogin times timerInput
             :: continuationVote remoteLogin continuationVotes
-            ++ [ speakerSectionView remoteLogin remoteSpeakers (getTimerState times) ]
+            ++ speakerSectionView remoteLogin remoteSpeakers (getTimerState times)
+            :: userNameInput
         )
 
 
