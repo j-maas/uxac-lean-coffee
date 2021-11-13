@@ -1948,7 +1948,7 @@ loadingIndicator active =
 currentSpeakerView : Login -> CurrentSpeaker -> TimerState -> Html Msg
 currentSpeakerView login current timerState =
     let
-        ( activeContributionId, activeSpeaker ) =
+        ( activeContributionId, activeSpeaker, reminder ) =
             current.speaker
 
         currentUserId =
@@ -1981,11 +1981,17 @@ currentSpeakerView login current timerState =
             (CurrentSpeakerDoneClicked activeContributionId)
             "Done"
             (Speakers.displayName activeSpeaker)
+            reminder
             ++ [ Html.ol []
                     (List.map
-                        (\( questionId, asker ) ->
+                        (\( questionId, asker, question ) ->
                             Html.li []
-                                (speakerContributionView (canModify asker) (QuestionDoneClicked questionId) "Done" (Speakers.displayName asker))
+                                (speakerContributionView (canModify asker)
+                                    (QuestionDoneClicked questionId)
+                                    "Done"
+                                    (Speakers.displayName asker)
+                                    question
+                                )
                         )
                         current.questions
                     )
@@ -1998,27 +2004,13 @@ currentSpeakerView login current timerState =
         )
 
 
-textWithButtonStyle : Css.Style
-textWithButtonStyle =
-    Css.batch
-        [ Css.displayFlex
-        , Css.flexDirection Css.row
-        , Css.alignItems Css.center
-        , Css.property "gap" "1rem"
-        ]
-
-
-
--- TODO: Remove enqueue button from parameters.
-
-
 followUpSpeakersView : Login -> SpeakerList -> List (Html Msg)
 followUpSpeakersView login followUpSpeakers =
     let
         followUps =
             followUpSpeakers
 
-        renderEntry ( contributionId, speaker ) =
+        renderEntry ( contributionId, speaker, reminder ) =
             let
                 currentUserId =
                     getUserId login
@@ -2032,6 +2024,7 @@ followUpSpeakersView login followUpSpeakers =
                     (UnqueueClicked contributionId)
                     "Unqueue"
                     (Speakers.displayName speaker)
+                    reminder
                 )
     in
     if List.isEmpty followUps then
@@ -2052,21 +2045,31 @@ followUpSpeakersView login followUpSpeakers =
         ]
 
 
-speakerContributionView : Bool -> Msg -> String -> SpeakerName -> List (Html Msg)
-speakerContributionView canModify msg label speakerName =
+speakerContributionView : Bool -> Msg -> String -> SpeakerName -> String -> List (Html Msg)
+speakerContributionView canModify msg label speakerName rawReminder =
     let
-        name =
+        reminder name =
+            case String.trim rawReminder of
+                "" ->
+                    name
+
+                trimmed ->
+                    name ++ ": " ++ trimmed
+
+        reminderView =
             case speakerName of
                 CustomName n ->
-                    text n
+                    text (reminder n)
 
                 GeneratedName n ->
-                    span [ css [ Css.fontStyle Css.italic ] ] [ text n ]
+                    span [ css [ Css.fontStyle Css.italic ] ] [ text (reminder n) ]
     in
-    name
+    reminderView
+        -- Add spacing that also works when the line breaks
+        :: text " "
         :: (if canModify then
                 [ Html.button
-                    [ css [ buttonStyle, Css.marginLeft (rem 0.5) ]
+                    [ css [ buttonStyle ]
                     , onClick msg
                     ]
                     [ text label ]
