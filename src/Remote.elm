@@ -1,4 +1,4 @@
-module Remote exposing (Remote(..), map, toMaybe, andMap)
+module Remote exposing (Remote(..), andMap, map, toMaybe)
 
 
 type Remote a

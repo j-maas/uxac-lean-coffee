@@ -1,4 +1,4 @@
-module QueuedList exposing (QueuedList, allToList, filterMap, map, isEmpty)
+module QueuedList exposing (QueuedList, allToList, filterMap, isEmpty, map)
 
 
 type alias QueuedList a =

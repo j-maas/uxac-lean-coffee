@@ -1,6 +1,6 @@
 module SortedDictTest exposing (..)
 
-import Expect 
+import Expect
 import Fuzz
 import SortedDict exposing (SortedDict)
 import Test exposing (..)

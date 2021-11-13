@@ -55,6 +55,10 @@ type alias Model =
     , user : Remote Login
     , userNames : UserNames.Store
     , speakers : Speakers.Store
+    , reminderInput : String
+    , remindersBeingEdited : Dict ContributionId String
+    , questionInput : String
+    , questionsBeingEdited : Maybe ( ContributionId, Dict ContributionId String )
     , userNameInput : Maybe String
     , error : Maybe Error
     , workspace : Workspace
@@ -252,6 +256,10 @@ init flags =
       , userNameInput = Nothing
       , userNames = UserNames.loading
       , speakers = Speakers.loading
+      , reminderInput = ""
+      , remindersBeingEdited = Dict.empty
+      , questionInput = ""
+      , questionsBeingEdited = Nothing
       , error = Nothing
       , workspace = workspace
       , uuidSeeds = uuidSeeds
@@ -300,9 +308,17 @@ type Msg
     | ChangeUserNameClicked
     | UserNameChanged String
     | SaveUserNameClicked
+    | ReminderInputChanged String
+    | ReminderEditClicked ContributionId String
+    | ReminderInputForContributionChanged ContributionId String
+    | ReminderSaveClicked ContributionId
     | EnqueueClicked
     | CurrentSpeakerDoneClicked ContributionId
     | UnqueueClicked ContributionId
+    | NewQuestionInputChanged String
+    | QuestionInputChanged ContributionId String
+    | QuestionEditClicked ContributionId ContributionId String
+    | QuestionSaveClicked ContributionId ContributionId
     | AskQuestionClicked
     | QuestionDoneClicked ContributionId
     | Tick Time.Posix
@@ -559,10 +575,41 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
+        ReminderInputChanged newReminderInput ->
+            ( { model | reminderInput = newReminderInput }, Cmd.none )
+
+        ReminderEditClicked contributionId currentReminder ->
+            ( { model
+                | remindersBeingEdited =
+                    Dict.insert contributionId currentReminder model.remindersBeingEdited
+              }
+            , Cmd.none
+            )
+
+        ReminderInputForContributionChanged contributionId newReminder ->
+            ( { model
+                | remindersBeingEdited = Dict.insert contributionId newReminder model.remindersBeingEdited
+              }
+            , Cmd.none
+            )
+
+        ReminderSaveClicked contributionId ->
+            case Dict.get contributionId model.remindersBeingEdited of
+                Just newReminder ->
+                    ( { model
+                        | remindersBeingEdited =
+                            Dict.remove contributionId model.remindersBeingEdited
+                      }
+                    , Speakers.editReminder model.workspace contributionId newReminder
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
         EnqueueClicked ->
             case model.user of
                 Got user ->
-                    ( model, Speakers.enqueue model.workspace model.timestampField (getUserId user) )
+                    ( { model | reminderInput = "" }, Speakers.enqueue model.workspace model.timestampField (getUserId user) model.reminderInput )
 
                 Loading ->
                     ( model, Cmd.none )
@@ -613,10 +660,74 @@ update msg model =
         UnqueueClicked speakerContributionId ->
             ( model, Speakers.removeSpeakerContribution model.workspace speakerContributionId )
 
+        NewQuestionInputChanged newQuestion ->
+            ( { model | questionInput = newQuestion }, Cmd.none )
+
+        QuestionInputChanged questionId newQuestion ->
+            let
+                newQuestionsBeingEdited =
+                    model.questionsBeingEdited
+                        |> Maybe.map
+                            (\( parent, questions ) ->
+                                ( parent
+                                , Dict.insert questionId
+                                    newQuestion
+                                    questions
+                                )
+                            )
+            in
+            ( { model | questionsBeingEdited = newQuestionsBeingEdited }, Cmd.none )
+
+        QuestionEditClicked parent questionId currentQuestion ->
+            let
+                override =
+                    Just ( parent, Dict.empty |> Dict.insert questionId currentQuestion )
+
+                newQuestionsBeingEdited =
+                    case model.questionsBeingEdited of
+                        Just ( previousParent, questions ) ->
+                            if parent == previousParent then
+                                Just ( previousParent, Dict.insert questionId currentQuestion questions )
+
+                            else
+                                override
+
+                        Nothing ->
+                            override
+            in
+            ( { model | questionsBeingEdited = newQuestionsBeingEdited }, Cmd.none )
+
+        QuestionSaveClicked parent questionId ->
+            case model.questionsBeingEdited of
+                Just ( currentParent, questions ) ->
+                    if currentParent == parent then
+                        case Dict.get questionId questions of
+                            Just newQuestion ->
+                                ( { model
+                                    | questionsBeingEdited =
+                                        Just ( currentParent, Dict.remove questionId questions )
+                                  }
+                                , Speakers.editQuestion model.workspace questionId newQuestion
+                                )
+
+                            Nothing ->
+                                ( model, Cmd.none )
+
+                    else
+                        ( model, Cmd.none )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
         AskQuestionClicked ->
             case model.user of
                 Got user ->
-                    ( model, Speakers.ask model.workspace model.timestampField (getUserId user) )
+                    ( { model | questionInput = "" }
+                    , Speakers.ask model.workspace
+                        model.timestampField
+                        (getUserId user)
+                        model.questionInput
+                    )
 
                 Loading ->
                     ( model, Cmd.none )
@@ -843,7 +954,7 @@ submitTopicInDiscussion workspace topicId remoteTopics timestampField now timerI
                     { docPath = inDiscussionDocPath workspace
                     , doc = topicIdEncoder topicId
                     }
-                , Speakers.enqueue workspace timestampField topic.creator
+                , Speakers.enqueue workspace timestampField topic.creator topic.topic
                 , startTimer workspace now timerInput continuationVotes
                 ]
 
@@ -940,6 +1051,10 @@ view model =
                     (Speakers.get model.userNames model.speakers)
                     model.userNameInput
                     model.userNames
+                    model.reminderInput
+                    model.remindersBeingEdited
+                    model.questionsBeingEdited
+                    model.questionInput
                 :: discussedTopics model.user discussedList
                 ++ [ topicEntry model.user model.newTopicInput ]
             )
@@ -1449,8 +1564,12 @@ discussionView :
     -> Remote SpeakersQueue
     -> Maybe String
     -> UserNames.Store
+    -> String
+    -> Dict ContributionId String
+    -> Maybe ( ContributionId, Dict ContributionId String )
+    -> String
     -> Html Msg
-discussionView remoteLogin maybeDiscussedTopic continuationVotes times timerInput remoteSpeakers maybeUserNameInput userNamesStore =
+discussionView remoteLogin maybeDiscussedTopic continuationVotes times timerInput remoteSpeakers maybeUserNameInput userNamesStore reminderInput remindersBeingEdited questionsBeingEdited questionInput =
     let
         userNameInput =
             case ( remoteLogin, userNamesStore ) of
@@ -1508,7 +1627,13 @@ discussionView remoteLogin maybeDiscussedTopic continuationVotes times timerInpu
                )
             ++ remainingTime remoteLogin times timerInput
             :: continuationVote remoteLogin continuationVotes
-            ++ speakerSectionView remoteLogin remoteSpeakers (getTimerState times)
+            ++ speakerSectionView remoteLogin
+                remoteSpeakers
+                (getTimerState times)
+                reminderInput
+                remindersBeingEdited
+                questionsBeingEdited
+                questionInput
             :: userNameInput
         )
 
@@ -1822,8 +1947,8 @@ continuationVoteButtons user continuationVotes =
         [ stayButton, abstainButton, moveOnButton ]
 
 
-speakerSectionView : Remote Login -> Remote SpeakersQueue -> TimerState -> Html Msg
-speakerSectionView remoteLogin remoteSpeakers timerState =
+speakerSectionView : Remote Login -> Remote SpeakersQueue -> TimerState -> String -> Dict ContributionId String -> Maybe ( ContributionId, Dict ContributionId String ) -> String -> Html Msg
+speakerSectionView remoteLogin remoteSpeakers timerState reminderInput remindersBeingEdited questionsBeingEdited questionInput =
     Html.div
         [ css
             [ spaceChildren (Css.marginTop (rem 0.5))
@@ -1832,34 +1957,20 @@ speakerSectionView remoteLogin remoteSpeakers timerState =
         (case ( remoteLogin, remoteSpeakers ) of
             ( Got login, Got maybeSpeakers ) ->
                 let
-                    enqueueButton : Bool -> Html Msg
-                    enqueueButton queueing =
-                        let
-                            timerEnded =
-                                case timerState of
-                                    Ended ->
-                                        True
+                    timerEnded =
+                        case timerState of
+                            Ended ->
+                                True
 
-                                    _ ->
-                                        False
+                            _ ->
+                                False
 
-                            disabled =
-                                if timerEnded || queueing then
-                                    [ Attributes.disabled True ]
+                    disabled =
+                        if timerEnded || maybeSpeakers.queueing then
+                            [ Attributes.disabled True ]
 
-                                else
-                                    []
-                        in
-                        Html.button
-                            ([ css
-                                [ buttonStyle
-                                , loadingIndicator queueing
-                                ]
-                             , onClick EnqueueClicked
-                             ]
-                                ++ disabled
-                            )
-                            [ text "Enqueue" ]
+                        else
+                            []
 
                     template above below =
                         [ Html.div
@@ -1869,14 +1980,43 @@ speakerSectionView remoteLogin remoteSpeakers timerState =
                             ]
                             [ above
                             ]
-                        , enqueueButton maybeSpeakers.queueing
+                        , Html.form
+                            [ onSubmit EnqueueClicked
+                            , css
+                                [ Css.displayFlex
+                                , Css.property "gap" "0.5rem"
+                                ]
+                            ]
+                            [ Html.input [ value reminderInput, onInput ReminderInputChanged, css [ inputStyle ] ] []
+                            , Html.input
+                                ([ type_ "submit"
+                                 , value "Enqueue"
+                                 , css
+                                    [ buttonStyle
+                                    , loadingIndicator maybeSpeakers.queueing
+                                    ]
+                                 ]
+                                    ++ disabled
+                                )
+                                []
+                            ]
                         ]
                             ++ below
                 in
                 case maybeSpeakers.speakers of
                     Just speakers ->
-                        template (currentSpeakerView login speakers.current timerState)
-                            (followUpSpeakersView login speakers.following)
+                        template
+                            (currentSpeakerView login
+                                speakers.current
+                                remindersBeingEdited
+                                questionsBeingEdited
+                                questionInput
+                                timerState
+                            )
+                            (followUpSpeakersView login
+                                speakers.following
+                                remindersBeingEdited
+                            )
 
                     Nothing ->
                         template (Html.div [] [ text "No speakers in queue yet." ])
@@ -1945,10 +2085,17 @@ loadingIndicator active =
         ]
 
 
-currentSpeakerView : Login -> CurrentSpeaker -> TimerState -> Html Msg
-currentSpeakerView login current timerState =
+currentSpeakerView :
+    Login
+    -> CurrentSpeaker
+    -> Dict ContributionId String
+    -> Maybe ( ContributionId, Dict ContributionId String )
+    -> String
+    -> TimerState
+    -> Html Msg
+currentSpeakerView login current remindersBeingEdited questionsBeingEdited questionInput timerState =
     let
-        ( activeContributionId, activeSpeaker ) =
+        ( activeContributionId, activeSpeaker, reminder ) =
             current.speaker
 
         currentUserId =
@@ -1977,48 +2124,77 @@ currentSpeakerView login current timerState =
     card
         []
         []
-        (speakerContributionView (canModify activeSpeaker && List.isEmpty current.questions)
-            (CurrentSpeakerDoneClicked activeContributionId)
-            "Done"
-            (Speakers.displayName activeSpeaker)
-            ++ [ Html.ol []
+        (speakerContributionView
+            { canModify = canModify activeSpeaker && List.isEmpty current.questions
+            , msgs =
+                { done = CurrentSpeakerDoneClicked activeContributionId
+                , edit = ReminderEditClicked activeContributionId
+                , changed = ReminderInputForContributionChanged activeContributionId
+                , save = ReminderSaveClicked activeContributionId
+                }
+            , label = "Done"
+            , speakerName = Speakers.displayName activeSpeaker
+            , rawReminder = reminder
+            , maybeReminderInput = Dict.get activeContributionId remindersBeingEdited
+            }
+            ++ [ let
+                    getQuestionInput questionId =
+                        questionsBeingEdited
+                            |> Maybe.andThen
+                                (\( parent, questions ) ->
+                                    if parent == activeContributionId then
+                                        Dict.get questionId questions
+
+                                    else
+                                        Nothing
+                                )
+                 in
+                 Html.ol []
                     (List.map
-                        (\( questionId, asker ) ->
+                        (\( questionId, asker, question ) ->
                             Html.li []
-                                (speakerContributionView (canModify asker) (QuestionDoneClicked questionId) "Done" (Speakers.displayName asker))
+                                (speakerContributionView
+                                    { canModify = canModify asker
+                                    , msgs =
+                                        { done = QuestionDoneClicked questionId
+                                        , edit = QuestionEditClicked activeContributionId questionId
+                                        , changed = QuestionInputChanged questionId
+                                        , save = QuestionSaveClicked activeContributionId questionId
+                                        }
+                                    , label = "Done"
+                                    , speakerName = Speakers.displayName asker
+                                    , rawReminder = question
+                                    , maybeReminderInput = getQuestionInput questionId
+                                    }
+                                )
                         )
                         current.questions
                     )
-               , Html.button
-                    ([ css [ buttonStyle, loadingIndicator current.questionsQueueing ], onClick AskQuestionClicked ]
-                        ++ disabled
-                    )
-                    [ Html.text "Ask question" ]
+               , Html.form [ onSubmit AskQuestionClicked, css [ Css.displayFlex, Css.property "gap" "0.5rem" ] ]
+                    [ Html.input [ value questionInput, onInput NewQuestionInputChanged, css [ inputStyle ] ] []
+                    , Html.input
+                        ([ type_ "submit"
+                         , value "Ask"
+                         , css
+                            [ buttonStyle
+                            , loadingIndicator current.questionsQueueing
+                            ]
+                         ]
+                            ++ disabled
+                        )
+                        []
+                    ]
                ]
         )
 
 
-textWithButtonStyle : Css.Style
-textWithButtonStyle =
-    Css.batch
-        [ Css.displayFlex
-        , Css.flexDirection Css.row
-        , Css.alignItems Css.center
-        , Css.property "gap" "1rem"
-        ]
-
-
-
--- TODO: Remove enqueue button from parameters.
-
-
-followUpSpeakersView : Login -> SpeakerList -> List (Html Msg)
-followUpSpeakersView login followUpSpeakers =
+followUpSpeakersView : Login -> SpeakerList -> Dict ContributionId String -> List (Html Msg)
+followUpSpeakersView login followUpSpeakers remindersBeingEdited =
     let
         followUps =
             followUpSpeakers
 
-        renderEntry ( contributionId, speaker ) =
+        renderEntry ( contributionId, speaker, reminder ) =
             let
                 currentUserId =
                     getUserId login
@@ -2028,10 +2204,18 @@ followUpSpeakersView login followUpSpeakers =
             in
             Html.li []
                 (speakerContributionView
-                    canModify
-                    (UnqueueClicked contributionId)
-                    "Unqueue"
-                    (Speakers.displayName speaker)
+                    { canModify = canModify
+                    , msgs =
+                        { done = UnqueueClicked contributionId
+                        , edit = ReminderEditClicked contributionId
+                        , changed = ReminderInputForContributionChanged contributionId
+                        , save = ReminderSaveClicked contributionId
+                        }
+                    , label = "Unqueue"
+                    , speakerName = Speakers.displayName speaker
+                    , rawReminder = reminder
+                    , maybeReminderInput = Dict.get contributionId remindersBeingEdited
+                    }
                 )
     in
     if List.isEmpty followUps then
@@ -2052,29 +2236,100 @@ followUpSpeakersView login followUpSpeakers =
         ]
 
 
-speakerContributionView : Bool -> Msg -> String -> SpeakerName -> List (Html Msg)
-speakerContributionView canModify msg label speakerName =
+speakerContributionView :
+    { canModify : Bool
+    , msgs :
+        { done : Msg
+        , edit : String -> Msg
+        , changed : String -> Msg
+        , save : Msg
+        }
+    , label : String
+    , speakerName : SpeakerName
+    , rawReminder : String
+    , maybeReminderInput : Maybe String
+    }
+    -> List (Html Msg)
+speakerContributionView { canModify, msgs, label, speakerName, rawReminder, maybeReminderInput } =
     let
-        name =
+        reminder =
+            String.trim rawReminder
+
+        nameView =
             case speakerName of
                 CustomName n ->
                     text n
 
                 GeneratedName n ->
                     span [ css [ Css.fontStyle Css.italic ] ] [ text n ]
-    in
-    name
-        :: (if canModify then
-                [ Html.button
-                    [ css [ buttonStyle, Css.marginLeft (rem 0.5) ]
-                    , onClick msg
+
+        doneButton =
+            Html.button
+                [ css [ buttonStyle ]
+                , onClick msgs.done
+                ]
+                [ text label ]
+
+        reminderEditButton =
+            Html.button
+                [ css [ buttonStyle ]
+                , onClick (msgs.edit reminder)
+                ]
+                [ text "Edit" ]
+
+        toolbar buttons =
+            if canModify then
+                [ Html.span
+                    [ css
+                        [ Css.display Css.inlineFlex
+                        , Css.property "gap" "0.5rem"
+                        ]
                     ]
-                    [ text label ]
+                    buttons
                 ]
 
             else
                 []
-           )
+    in
+    case maybeReminderInput of
+        Just reminderInput ->
+            [ nameView
+            , text ": "
+            , Html.form
+                [ onSubmit msgs.save
+                , css
+                    [ Css.display Css.inlineFlex
+                    , Css.alignItems Css.center
+                    , Css.property "gap" "0.5rem"
+                    , Css.marginRight (rem 0.5)
+                    ]
+                ]
+                [ Html.input
+                    [ value reminderInput
+                    , onInput msgs.changed
+                    , css [ inputStyle ]
+                    ]
+                    []
+                , Html.input [ type_ "submit", value "Save", css [ buttonStyle ] ] []
+                ]
+            ]
+                ++ toolbar [ doneButton ]
+
+        Nothing ->
+            let
+                reminderView =
+                    if String.isEmpty reminder then
+                        []
+
+                    else
+                        [ text (": " ++ reminder) ]
+            in
+            nameView
+                :: reminderView
+                -- Add spacing that also works when the line breaks
+                ++ (text " "
+                        :: toolbar [ reminderEditButton, doneButton ]
+                   )
 
 
 topicEntry : Remote Login -> String -> Html Msg
@@ -2353,7 +2608,7 @@ topicToVoteCard remoteUser ( topicId, entry ) =
                                 ]
                             ]
                             []
-                        , div [ css [ Css.marginLeft (rem 1) ] ] [ saveButton topicId ]
+                        , Html.input [ type_ "submit", value "Save", css [ buttonStyle, Css.marginLeft (rem 1) ] ] []
                         ]
 
                 Nothing ->
@@ -2514,15 +2769,6 @@ votesText : Int -> Html Msg
 votesText count =
     text
         ("👍 " ++ String.fromInt count)
-
-
-saveButton : TopicId -> Html Msg
-saveButton topicId =
-    button
-        [ onClick (SaveTopicClicked topicId)
-        , css [ buttonStyle ]
-        ]
-        [ text "Save" ]
 
 
 editButton : TopicId -> Html Msg

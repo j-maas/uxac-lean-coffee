@@ -206,6 +206,14 @@ app.ports.setDoc_.subscribe(info => {
     .catch(sendErrorToElm);
 });
 
+app.ports.editDoc_.subscribe(info => {
+  console.debug(`Editing the doc at ${info.path}:\n`, info.doc);
+
+  db.doc(info.path)
+    .update(info.fields)
+    .catch(sendErrorToElm);
+});
+
 app.ports.deleteDocs_.subscribe(info => {
   console.debug(`Deleting the docs at ${info.paths}`);
 
