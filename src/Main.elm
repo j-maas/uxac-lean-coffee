@@ -55,6 +55,7 @@ type alias Model =
     , user : Remote Login
     , userNames : UserNames.Store
     , speakers : Speakers.Store
+    , reminderInput : String
     , remindersBeingEdited : Dict ContributionId String
     , userNameInput : Maybe String
     , error : Maybe Error
@@ -253,6 +254,7 @@ init flags =
       , userNameInput = Nothing
       , userNames = UserNames.loading
       , speakers = Speakers.loading
+      , reminderInput = ""
       , remindersBeingEdited = Dict.empty
       , error = Nothing
       , workspace = workspace
@@ -302,6 +304,7 @@ type Msg
     | ChangeUserNameClicked
     | UserNameChanged String
     | SaveUserNameClicked
+    | ReminderInputChanged String
     | EnqueueClicked
     | CurrentSpeakerDoneClicked ContributionId
     | UnqueueClicked ContributionId
@@ -561,10 +564,13 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
+        ReminderInputChanged newReminderInput ->
+            ( { model | reminderInput = newReminderInput }, Cmd.none )
+
         EnqueueClicked ->
             case model.user of
                 Got user ->
-                    ( model, Speakers.enqueue model.workspace model.timestampField (getUserId user) )
+                    ( { model | reminderInput = "" }, Speakers.enqueue model.workspace model.timestampField (getUserId user) model.reminderInput )
 
                 Loading ->
                     ( model, Cmd.none )
@@ -618,7 +624,7 @@ update msg model =
         AskQuestionClicked ->
             case model.user of
                 Got user ->
-                    ( model, Speakers.ask model.workspace model.timestampField (getUserId user) )
+                    ( model, Speakers.ask model.workspace model.timestampField (getUserId user) "" )
 
                 Loading ->
                     ( model, Cmd.none )
@@ -845,7 +851,7 @@ submitTopicInDiscussion workspace topicId remoteTopics timestampField now timerI
                     { docPath = inDiscussionDocPath workspace
                     , doc = topicIdEncoder topicId
                     }
-                , Speakers.enqueue workspace timestampField topic.creator
+                , Speakers.enqueue workspace timestampField topic.creator topic.topic
                 , startTimer workspace now timerInput continuationVotes
                 ]
 
@@ -942,6 +948,7 @@ view model =
                     (Speakers.get model.userNames model.speakers)
                     model.userNameInput
                     model.userNames
+                    model.reminderInput
                 :: discussedTopics model.user discussedList
                 ++ [ topicEntry model.user model.newTopicInput ]
             )
@@ -1451,8 +1458,9 @@ discussionView :
     -> Remote SpeakersQueue
     -> Maybe String
     -> UserNames.Store
+    -> String
     -> Html Msg
-discussionView remoteLogin maybeDiscussedTopic continuationVotes times timerInput remoteSpeakers maybeUserNameInput userNamesStore =
+discussionView remoteLogin maybeDiscussedTopic continuationVotes times timerInput remoteSpeakers maybeUserNameInput userNamesStore reminderInput =
     let
         userNameInput =
             case ( remoteLogin, userNamesStore ) of
@@ -1510,7 +1518,7 @@ discussionView remoteLogin maybeDiscussedTopic continuationVotes times timerInpu
                )
             ++ remainingTime remoteLogin times timerInput
             :: continuationVote remoteLogin continuationVotes
-            ++ speakerSectionView remoteLogin remoteSpeakers (getTimerState times)
+            ++ speakerSectionView remoteLogin remoteSpeakers (getTimerState times) reminderInput
             :: userNameInput
         )
 
@@ -1824,8 +1832,8 @@ continuationVoteButtons user continuationVotes =
         [ stayButton, abstainButton, moveOnButton ]
 
 
-speakerSectionView : Remote Login -> Remote SpeakersQueue -> TimerState -> Html Msg
-speakerSectionView remoteLogin remoteSpeakers timerState =
+speakerSectionView : Remote Login -> Remote SpeakersQueue -> TimerState -> String -> Html Msg
+speakerSectionView remoteLogin remoteSpeakers timerState reminderInput =
     Html.div
         [ css
             [ spaceChildren (Css.marginTop (rem 0.5))
@@ -1871,7 +1879,10 @@ speakerSectionView remoteLogin remoteSpeakers timerState =
                             ]
                             [ above
                             ]
-                        , enqueueButton maybeSpeakers.queueing
+                        , Html.div [ css [ Css.displayFlex, Css.property "gap" "0.5rem" ] ]
+                            [ Html.input [ value reminderInput, onInput ReminderInputChanged, css [ inputStyle ] ] []
+                            , enqueueButton maybeSpeakers.queueing
+                            ]
                         ]
                             ++ below
                 in

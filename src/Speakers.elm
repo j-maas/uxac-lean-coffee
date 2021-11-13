@@ -65,11 +65,11 @@ displayName speaker =
             GeneratedName (HumanReadableId.humanize speaker.userId)
 
 
-enqueue : Store.Workspace -> Store.TimestampField -> UserId -> Cmd msg
-enqueue workspace timestamp userId =
+enqueue : Store.Workspace -> Store.TimestampField -> UserId -> String -> Cmd msg
+enqueue workspace timestamp userId reminder =
     Store.insertDoc
         { collectionPath = speakerCollectionPath workspace
-        , doc = speakerEncoder timestamp userId
+        , doc = speakerEncoder timestamp userId reminder
         }
 
 
@@ -80,11 +80,11 @@ removeSpeakerContribution workspace speakerContributionId =
         ]
 
 
-ask : Store.Workspace -> Store.TimestampField -> UserId -> Cmd msg
-ask workspace timestamp userId =
+ask : Store.Workspace -> Store.TimestampField -> UserId -> String -> Cmd msg
+ask workspace timestamp userId reminder =
     Store.insertDoc
         { collectionPath = questionCollectionPath workspace
-        , doc = speakerEncoder timestamp userId
+        , doc = speakerEncoder timestamp userId reminder
         }
 
 
@@ -93,6 +93,7 @@ removeQuestion workspace speakerContributionId =
     Store.deleteDocs
         [ questionCollectionPath workspace ++ [ speakerContributionId ]
         ]
+
 
 
 -- BACKEND
@@ -202,12 +203,19 @@ type alias DecodedSpeakerEntry =
     ( ContributionId, UserId, String )
 
 
-speakerEncoder : Store.TimestampField -> UserId -> Encode.Value
-speakerEncoder timestamp userId =
+speakerEncoder : Store.TimestampField -> UserId -> String -> Encode.Value
+speakerEncoder timestamp userId reminder =
     Encode.object
-        [ ( "userId", Encode.string userId )
-        , ( "createdAt", timestamp )
-        ]
+        ([ ( "userId", Encode.string userId )
+         , ( "createdAt", timestamp )
+         ]
+            ++ (if String.trim reminder |> String.isEmpty then
+                    []
+
+                else
+                    [ ( "reminder", Encode.string reminder ) ]
+               )
+        )
 
 
 speakersDecoder : Decoder DecodedSpeakers
@@ -216,7 +224,7 @@ speakersDecoder =
         (Decode.map4
             (\speakerContributionId userId maybeReminder maybeCreatedAt ->
                 ( maybeCreatedAt
-                , ( speakerContributionId, userId, maybeReminder |> Maybe.withDefault "My new topic" )
+                , ( speakerContributionId, userId, maybeReminder |> Maybe.withDefault "" )
                 )
             )
             (Decode.field "id" Decode.string)
