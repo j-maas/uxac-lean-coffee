@@ -57,6 +57,7 @@ type alias Model =
     , speakers : Speakers.Store
     , reminderInput : String
     , remindersBeingEdited : Dict ContributionId String
+    , questionInput : String
     , questionsBeingEdited : Maybe ( ContributionId, Dict ContributionId String )
     , userNameInput : Maybe String
     , error : Maybe Error
@@ -257,6 +258,7 @@ init flags =
       , speakers = Speakers.loading
       , reminderInput = ""
       , remindersBeingEdited = Dict.empty
+      , questionInput = ""
       , questionsBeingEdited = Nothing
       , error = Nothing
       , workspace = workspace
@@ -313,6 +315,7 @@ type Msg
     | EnqueueClicked
     | CurrentSpeakerDoneClicked ContributionId
     | UnqueueClicked ContributionId
+    | NewQuestionInputChanged String
     | QuestionInputChanged ContributionId String
     | QuestionEditClicked ContributionId ContributionId String
     | QuestionSaveClicked ContributionId ContributionId
@@ -657,6 +660,9 @@ update msg model =
         UnqueueClicked speakerContributionId ->
             ( model, Speakers.removeSpeakerContribution model.workspace speakerContributionId )
 
+        NewQuestionInputChanged newQuestion ->
+            ( { model | questionInput = newQuestion }, Cmd.none )
+
         QuestionInputChanged questionId newQuestion ->
             let
                 newQuestionsBeingEdited =
@@ -716,7 +722,12 @@ update msg model =
         AskQuestionClicked ->
             case model.user of
                 Got user ->
-                    ( model, Speakers.ask model.workspace model.timestampField (getUserId user) "" )
+                    ( { model | questionInput = "" }
+                    , Speakers.ask model.workspace
+                        model.timestampField
+                        (getUserId user)
+                        model.questionInput
+                    )
 
                 Loading ->
                     ( model, Cmd.none )
@@ -1043,6 +1054,7 @@ view model =
                     model.reminderInput
                     model.remindersBeingEdited
                     model.questionsBeingEdited
+                    model.questionInput
                 :: discussedTopics model.user discussedList
                 ++ [ topicEntry model.user model.newTopicInput ]
             )
@@ -1555,8 +1567,9 @@ discussionView :
     -> String
     -> Dict ContributionId String
     -> Maybe ( ContributionId, Dict ContributionId String )
+    -> String
     -> Html Msg
-discussionView remoteLogin maybeDiscussedTopic continuationVotes times timerInput remoteSpeakers maybeUserNameInput userNamesStore reminderInput remindersBeingEdited questionsBeingEdited =
+discussionView remoteLogin maybeDiscussedTopic continuationVotes times timerInput remoteSpeakers maybeUserNameInput userNamesStore reminderInput remindersBeingEdited questionsBeingEdited questionInput =
     let
         userNameInput =
             case ( remoteLogin, userNamesStore ) of
@@ -1620,6 +1633,7 @@ discussionView remoteLogin maybeDiscussedTopic continuationVotes times timerInpu
                 reminderInput
                 remindersBeingEdited
                 questionsBeingEdited
+                questionInput
             :: userNameInput
         )
 
@@ -1933,8 +1947,8 @@ continuationVoteButtons user continuationVotes =
         [ stayButton, abstainButton, moveOnButton ]
 
 
-speakerSectionView : Remote Login -> Remote SpeakersQueue -> TimerState -> String -> Dict ContributionId String -> Maybe ( ContributionId, Dict ContributionId String ) -> Html Msg
-speakerSectionView remoteLogin remoteSpeakers timerState reminderInput remindersBeingEdited questionsBeingEdited =
+speakerSectionView : Remote Login -> Remote SpeakersQueue -> TimerState -> String -> Dict ContributionId String -> Maybe ( ContributionId, Dict ContributionId String ) -> String -> Html Msg
+speakerSectionView remoteLogin remoteSpeakers timerState reminderInput remindersBeingEdited questionsBeingEdited questionInput =
     Html.div
         [ css
             [ spaceChildren (Css.marginTop (rem 0.5))
@@ -1994,6 +2008,7 @@ speakerSectionView remoteLogin remoteSpeakers timerState reminderInput reminders
                                 speakers.current
                                 remindersBeingEdited
                                 questionsBeingEdited
+                                questionInput
                                 timerState
                             )
                             (followUpSpeakersView login
@@ -2073,9 +2088,10 @@ currentSpeakerView :
     -> CurrentSpeaker
     -> Dict ContributionId String
     -> Maybe ( ContributionId, Dict ContributionId String )
+    -> String
     -> TimerState
     -> Html Msg
-currentSpeakerView login current remindersBeingEdited questionsBeingEdited timerState =
+currentSpeakerView login current remindersBeingEdited questionsBeingEdited questionInput timerState =
     let
         ( activeContributionId, activeSpeaker, reminder ) =
             current.speaker
@@ -2152,11 +2168,14 @@ currentSpeakerView login current remindersBeingEdited questionsBeingEdited timer
                         )
                         current.questions
                     )
-               , Html.button
-                    ([ css [ buttonStyle, loadingIndicator current.questionsQueueing ], onClick AskQuestionClicked ]
-                        ++ disabled
-                    )
-                    [ Html.text "Ask question" ]
+               , Html.div [ css [ Css.displayFlex, Css.property "gap" "0.5rem" ] ]
+                    [ Html.input [ value questionInput, onInput NewQuestionInputChanged, css [ inputStyle ] ] []
+                    , Html.button
+                        ([ css [ buttonStyle, loadingIndicator current.questionsQueueing ], onClick AskQuestionClicked ]
+                            ++ disabled
+                        )
+                        [ Html.text "Ask" ]
+                    ]
                ]
         )
 
