@@ -1,4 +1,4 @@
-module Remote exposing (Remote(..), map, toMaybe)
+module Remote exposing (Remote(..), andMap, map, toMaybe)
 
 
 type Remote a
@@ -24,3 +24,13 @@ toMaybe remote =
 
         Got a ->
             Just a
+
+
+andMap : Remote a -> Remote (a -> b) -> Remote b
+andMap first second =
+    case ( first, second ) of
+        ( Got a, Got mapping ) ->
+            Got (mapping a)
+
+        _ ->
+            Loading

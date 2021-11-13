@@ -4,14 +4,19 @@
     "test": "tests"
   },
   "dependencies": {
-    "firebase": "^8.4.1"
+    "firebase": "^8.6.8"
   },
   "devDependencies": {
-    "create-elm-app": "^5.22.0"
+    "concurrently": "^6.2.0",
+    "create-elm-app": "^5.22.0",
+    "cross-env": "^7.0.3",
+    "firebase-tools": "^9.14.0"
   },
   "scripts": {
     "build": "elm-app build",
-    "start": "elm-app start",
+    "start": "concurrently npm:start:*",
+    "start:elm": "cross-env DISCUSSION_BOARD_MODE=prod elm-app start --no-browser",
+    "start:firebase": "firebase emulators:start --export-on-exit=firebase/state --import firebase/state",
     "test": "elm-app test"
   }
 }

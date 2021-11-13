@@ -6,8 +6,9 @@ import Css exposing (auto, num, pct, px, rem, zero)
 import Css.Animations as Animations
 import Css.Global as Global
 import Css.Media as Media
+import Css.Transitions as Transitions
 import Dict exposing (Dict)
-import Html.Styled as Html exposing (Attribute, Html, button, div, form, h1, h2, img, input, label, li, ol, span, text, textarea)
+import Html.Styled as Html exposing (Attribute, Html, button, div, h1, h2, img, li, ol, span, text, textarea)
 import Html.Styled.Attributes as Attributes exposing (css, src, type_, value)
 import Html.Styled.Events exposing (on, onClick, onInput, onMouseEnter, onSubmit)
 import Json.Decode as Decode exposing (Decoder)
@@ -17,8 +18,11 @@ import Random
 import Remote exposing (Remote(..))
 import Set exposing (Set)
 import SortedDict exposing (SortedDict)
+import Speakers exposing (ContributionId, CurrentSpeaker, SpeakerList, SpeakerName(..), SpeakersQueue)
+import Store exposing (..)
 import Time
 import UUID
+import UserNames exposing (UserId, UserNameEntry(..), UserNames)
 
 
 main : Program Flags Model Msg
@@ -48,7 +52,14 @@ type alias Model =
     , now : Maybe Time.Posix
     , timerInput : String
     , newTopicInput : String
-    , user : Remote User
+    , user : Remote Login
+    , userNames : UserNames.Store
+    , speakers : Speakers.Store
+    , reminderInput : String
+    , remindersBeingEdited : Dict ContributionId String
+    , questionInput : String
+    , questionsBeingEdited : Maybe ( ContributionId, Dict ContributionId String )
+    , userNameInput : Maybe String
     , error : Maybe Error
     , workspace : Workspace
     , uuidSeeds : UUID.Seeds
@@ -71,17 +82,13 @@ type alias TopicId =
 
 type alias Topic =
     { topic : String
-    , creator : String
+    , creator : UserId
     , createdAt : Maybe Time.Posix
     }
 
 
 type alias VoteCountMap =
     TopicId -> Int
-
-
-type alias Workspace =
-    String
 
 
 sortTopicList : VoteCountMap -> TopicList -> TopicList
@@ -133,7 +140,7 @@ type alias Vote =
     { userId : UserId, topicId : TopicId }
 
 
-voteFrom : User -> TopicId -> Vote
+voteFrom : Login -> TopicId -> Vote
 voteFrom user topicId =
     { userId = getUserId user, topicId = topicId }
 
@@ -150,12 +157,12 @@ type Continuation
     | Abstain
 
 
-type User
+type Login
     = AnonymousUser UserId
     | GoogleUser { id : UserId, email : String, isAdmin : Remote Bool, adminActive : Bool }
 
 
-setAdminActiveForUser : Bool -> Remote User -> Remote User
+setAdminActiveForUser : Bool -> Remote Login -> Remote Login
 setAdminActiveForUser adminActive remoteUser =
     case remoteUser of
         Got (GoogleUser user) ->
@@ -165,7 +172,7 @@ setAdminActiveForUser adminActive remoteUser =
             user
 
 
-isAdminActiveForUser : Remote User -> Bool
+isAdminActiveForUser : Remote Login -> Bool
 isAdminActiveForUser user =
     case user of
         Got (GoogleUser googleUser) ->
@@ -180,7 +187,7 @@ isAdminActiveForUser user =
             False
 
 
-getUserId : User -> UserId
+getUserId : Login -> UserId
 getUserId user =
     case user of
         AnonymousUser id ->
@@ -188,10 +195,6 @@ getUserId user =
 
         GoogleUser { id } ->
             id
-
-
-type alias UserId =
-    String
 
 
 type alias Error =
@@ -207,10 +210,6 @@ type ErrorInfo
 
 type alias FirestoreErrorInfo =
     { code : String, errorMessage : String }
-
-
-type alias TimestampField =
-    Decode.Value
 
 
 type alias Flags =
@@ -254,6 +253,13 @@ init flags =
       , timerInput = "10"
       , newTopicInput = ""
       , user = Loading
+      , userNameInput = Nothing
+      , userNames = UserNames.loading
+      , speakers = Speakers.loading
+      , reminderInput = ""
+      , remindersBeingEdited = Dict.empty
+      , questionInput = ""
+      , questionsBeingEdited = Nothing
       , error = Nothing
       , workspace = workspace
       , uuidSeeds = uuidSeeds
@@ -268,7 +274,7 @@ init flags =
 
 
 type Msg
-    = UserReceived (Result Decode.Error User)
+    = UserReceived (Result Decode.Error Login)
     | IsAdminReceived Bool
     | LogInWithGoogleClicked
     | LogOutClicked
@@ -282,17 +288,16 @@ type Msg
     | DiscussedTopicsReceived (List ( TopicId, Maybe Time.Posix ))
     | DeadlineReceived (Maybe Time.Posix)
     | Read TopicId
-    | SaveTopic User
+    | SaveTopic Login
     | EditTopicClicked TopicId
     | TopicEdited TopicId String
     | SaveTopicClicked TopicId
     | DeleteTopic TopicId
     | Discuss TopicId
     | MoveToDiscussedClicked
-    | MoveToSuggestedClicked
     | SortTopics
-    | Upvote User TopicId
-    | RemoveUpvote User TopicId
+    | Upvote Login TopicId
+    | RemoveUpvote Login TopicId
     | StartContinuationVote
     | ClearContinuationVote
     | ContinuationVoteSent ContinuationVote
@@ -300,10 +305,30 @@ type Msg
     | ErrorReceived (Result Decode.Error FirestoreErrorInfo)
     | DismissError
     | NewTopicInputChanged String
+    | ChangeUserNameClicked
+    | UserNameChanged String
+    | SaveUserNameClicked
+    | ReminderInputChanged String
+    | ReminderEditClicked ContributionId String
+    | ReminderInputForContributionChanged ContributionId String
+    | ReminderSaveClicked ContributionId
+    | EnqueueClicked
+    | CurrentSpeakerDoneClicked ContributionId
+    | UnqueueClicked ContributionId
+    | NewQuestionInputChanged String
+    | QuestionInputChanged ContributionId String
+    | QuestionEditClicked ContributionId ContributionId String
+    | QuestionSaveClicked ContributionId ContributionId
+    | AskQuestionClicked
+    | QuestionDoneClicked ContributionId
     | Tick Time.Posix
     | TimerInputChanged String
     | TimerStarted
     | TimerCleared
+      -- Stores
+    | UsersReceived UserNames
+    | SpeakersReceived Speakers.DecodedSpeakers
+    | QuestionsReceived Speakers.DecodedSpeakers
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -479,7 +504,7 @@ update msg model =
             ( model, deleteTopic model.workspace id model.votes )
 
         Discuss topicId ->
-            ( model, submitTopicInDiscussion model.workspace topicId )
+            ( model, submitTopicInDiscussion model.workspace topicId model.topics model.timestampField model.now model.timerInput model.continuationVotes )
 
         MoveToDiscussedClicked ->
             case model.inDiscussion of
@@ -490,17 +515,10 @@ update msg model =
                                 [ finishDiscussion model.workspace inDiscussion model.timestampField
                                 , clearContinuationVotes model.workspace (Remote.toMaybe model.continuationVotes)
                                 , clearDeadline model.workspace
+                                , Speakers.clearAll model.workspace model.speakers
                                 ]
                     in
                     ( model, cmds )
-
-                Nothing ->
-                    ( model, Cmd.none )
-
-        MoveToSuggestedClicked ->
-            case model.inDiscussion of
-                Just _ ->
-                    ( model, removeTopicInDiscussion model.workspace )
 
                 Nothing ->
                     ( model, Cmd.none )
@@ -529,6 +547,194 @@ update msg model =
         NewTopicInputChanged value ->
             ( { model | newTopicInput = value }, Cmd.none )
 
+        ChangeUserNameClicked ->
+            let
+                userName =
+                    case ( model.user, model.userNames ) of
+                        ( Got user, Got users ) ->
+                            case UserNames.get (getUserId user) users |> UserNames.extractName of
+                                Just name ->
+                                    name
+
+                                Nothing ->
+                                    ""
+
+                        _ ->
+                            ""
+            in
+            ( { model | userNameInput = Just userName }, Cmd.none )
+
+        UserNameChanged newUserName ->
+            ( { model | userNameInput = Just newUserName }, Cmd.none )
+
+        SaveUserNameClicked ->
+            case ( model.user, model.userNameInput ) of
+                ( Got user, Just userName ) ->
+                    ( { model | userNameInput = Nothing }, UserNames.setUserName model.workspace (getUserId user) userName )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        ReminderInputChanged newReminderInput ->
+            ( { model | reminderInput = newReminderInput }, Cmd.none )
+
+        ReminderEditClicked contributionId currentReminder ->
+            ( { model
+                | remindersBeingEdited =
+                    Dict.insert contributionId currentReminder model.remindersBeingEdited
+              }
+            , Cmd.none
+            )
+
+        ReminderInputForContributionChanged contributionId newReminder ->
+            ( { model
+                | remindersBeingEdited = Dict.insert contributionId newReminder model.remindersBeingEdited
+              }
+            , Cmd.none
+            )
+
+        ReminderSaveClicked contributionId ->
+            case Dict.get contributionId model.remindersBeingEdited of
+                Just newReminder ->
+                    ( { model
+                        | remindersBeingEdited =
+                            Dict.remove contributionId model.remindersBeingEdited
+                      }
+                    , Speakers.editReminder model.workspace contributionId newReminder
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        EnqueueClicked ->
+            case model.user of
+                Got user ->
+                    ( { model | reminderInput = "" }, Speakers.enqueue model.workspace model.timestampField (getUserId user) model.reminderInput )
+
+                Loading ->
+                    ( model, Cmd.none )
+
+        CurrentSpeakerDoneClicked speakerContributionId ->
+            let
+                removeSpeakerCmd =
+                    Speakers.removeSpeakerContribution model.workspace speakerContributionId
+
+                startContinuationVoteCmd =
+                    startContinuationVote model.workspace
+
+                remoteSpeakers =
+                    Speakers.get model.userNames model.speakers
+
+                isLastSpeaker =
+                    Remote.toMaybe remoteSpeakers
+                        |> Maybe.andThen .speakers
+                        |> Maybe.map
+                            (\speakers ->
+                                List.isEmpty speakers.following
+                            )
+                        -- TODO: Report invalid state if we clicked on "Done" for the current speaker but there is no speaker.
+                        |> Maybe.withDefault False
+
+                timerEnded =
+                    case getTimerState { now = model.now, deadline = model.deadline } of
+                        Ended ->
+                            True
+
+                        _ ->
+                            False
+
+                cmds =
+                    if isLastSpeaker || timerEnded then
+                        Cmd.batch
+                            [ removeSpeakerCmd
+                            , startContinuationVoteCmd
+                            ]
+
+                    else
+                        removeSpeakerCmd
+            in
+            ( model
+            , cmds
+            )
+
+        UnqueueClicked speakerContributionId ->
+            ( model, Speakers.removeSpeakerContribution model.workspace speakerContributionId )
+
+        NewQuestionInputChanged newQuestion ->
+            ( { model | questionInput = newQuestion }, Cmd.none )
+
+        QuestionInputChanged questionId newQuestion ->
+            let
+                newQuestionsBeingEdited =
+                    model.questionsBeingEdited
+                        |> Maybe.map
+                            (\( parent, questions ) ->
+                                ( parent
+                                , Dict.insert questionId
+                                    newQuestion
+                                    questions
+                                )
+                            )
+            in
+            ( { model | questionsBeingEdited = newQuestionsBeingEdited }, Cmd.none )
+
+        QuestionEditClicked parent questionId currentQuestion ->
+            let
+                override =
+                    Just ( parent, Dict.empty |> Dict.insert questionId currentQuestion )
+
+                newQuestionsBeingEdited =
+                    case model.questionsBeingEdited of
+                        Just ( previousParent, questions ) ->
+                            if parent == previousParent then
+                                Just ( previousParent, Dict.insert questionId currentQuestion questions )
+
+                            else
+                                override
+
+                        Nothing ->
+                            override
+            in
+            ( { model | questionsBeingEdited = newQuestionsBeingEdited }, Cmd.none )
+
+        QuestionSaveClicked parent questionId ->
+            case model.questionsBeingEdited of
+                Just ( currentParent, questions ) ->
+                    if currentParent == parent then
+                        case Dict.get questionId questions of
+                            Just newQuestion ->
+                                ( { model
+                                    | questionsBeingEdited =
+                                        Just ( currentParent, Dict.remove questionId questions )
+                                  }
+                                , Speakers.editQuestion model.workspace questionId newQuestion
+                                )
+
+                            Nothing ->
+                                ( model, Cmd.none )
+
+                    else
+                        ( model, Cmd.none )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        AskQuestionClicked ->
+            case model.user of
+                Got user ->
+                    ( { model | questionInput = "" }
+                    , Speakers.ask model.workspace
+                        model.timestampField
+                        (getUserId user)
+                        model.questionInput
+                    )
+
+                Loading ->
+                    ( model, Cmd.none )
+
+        QuestionDoneClicked questionId ->
+            ( model, Speakers.removeQuestion model.workspace questionId )
+
         Tick now ->
             ( { model | now = Just now }, Cmd.none )
 
@@ -536,38 +742,52 @@ update msg model =
             ( { model | timerInput = newInput }, Cmd.none )
 
         TimerStarted ->
-            let
-                maybeTimerInput =
-                    String.toInt model.timerInput
-            in
-            case ( model.now, maybeTimerInput ) of
-                ( Just now, Just timerInput ) ->
-                    let
-                        sanitizedTimerInput =
-                            timerInput
-                                |> atLeast 0
-
-                        timerInputInMilliseconds =
-                            sanitizedTimerInput * 1000 * 60
-
-                        deadline =
-                            Time.posixToMillis now
-                                + timerInputInMilliseconds
-                                |> Time.millisToPosix
-
-                        cmds =
-                            Cmd.batch
-                                [ submitDeadline model.workspace deadline
-                                , clearContinuationVotes model.workspace (Remote.toMaybe model.continuationVotes)
-                                ]
-                    in
-                    ( model, cmds )
-
-                _ ->
-                    ( model, Cmd.none )
+            ( model, startTimer model.workspace model.now model.timerInput model.continuationVotes )
 
         TimerCleared ->
             ( model, clearDeadline model.workspace )
+
+        UsersReceived newUsers ->
+            ( { model | userNames = Got newUsers }, Cmd.none )
+
+        SpeakersReceived newSpeakers ->
+            ( { model | speakers = Speakers.updateSpeakers newSpeakers model.speakers }, Cmd.none )
+
+        QuestionsReceived newQuestions ->
+            ( { model | speakers = Speakers.updateQuestions newQuestions model.speakers }, Cmd.none )
+
+
+startTimer : Workspace -> Maybe Time.Posix -> String -> Remote (List ContinuationVote) -> Cmd Msg
+startTimer workspace maybeNow rawTimerInput continuationVotes =
+    let
+        maybeTimerInput =
+            String.toInt rawTimerInput
+    in
+    case ( maybeNow, maybeTimerInput ) of
+        ( Just now, Just timerInput ) ->
+            let
+                sanitizedTimerInput =
+                    timerInput
+                        |> atLeast 0
+
+                timerInputInMilliseconds =
+                    sanitizedTimerInput * 1000 * 60
+
+                deadline =
+                    Time.posixToMillis now
+                        + timerInputInMilliseconds
+                        |> Time.millisToPosix
+
+                cmds =
+                    Cmd.batch
+                        [ submitDeadline workspace deadline
+                        , clearContinuationVotes workspace (Remote.toMaybe continuationVotes)
+                        ]
+            in
+            cmds
+
+        _ ->
+            Cmd.none
 
 
 processParsingError : Decode.Error -> Error
@@ -720,12 +940,27 @@ continuationVotePath workspace userId =
     continuationVoteCollectionPath workspace ++ [ userId ]
 
 
-submitTopicInDiscussion : Workspace -> TopicId -> Cmd msg
-submitTopicInDiscussion workspace topicId =
-    setDoc
-        { docPath = inDiscussionDocPath workspace
-        , doc = topicIdEncoder topicId
-        }
+submitTopicInDiscussion : Workspace -> TopicId -> Remote TopicList -> TimestampField -> Maybe Time.Posix -> String -> Remote (List ContinuationVote) -> Cmd Msg
+submitTopicInDiscussion workspace topicId remoteTopics timestampField now timerInput continuationVotes =
+    let
+        maybeTopic =
+            Remote.toMaybe remoteTopics
+                |> Maybe.andThen (SortedDict.get topicId)
+    in
+    case maybeTopic of
+        Just topic ->
+            Cmd.batch
+                [ setDoc
+                    { docPath = inDiscussionDocPath workspace
+                    , doc = topicIdEncoder topicId
+                    }
+                , Speakers.enqueue workspace timestampField topic.creator topic.topic
+                , startTimer workspace now timerInput continuationVotes
+                ]
+
+        Nothing ->
+            -- TODO: Report invalid state.
+            Cmd.none
 
 
 finishDiscussion : Workspace -> TopicId -> TimestampField -> Cmd msg
@@ -737,11 +972,6 @@ finishDiscussion workspace topicId timestamp =
             , doc = discussedTopicEncoder topicId timestamp
             }
         ]
-
-
-removeTopicInDiscussion : Workspace -> Cmd msg
-removeTopicInDiscussion workspace =
-    deleteDocs [ inDiscussionDocPath workspace ]
 
 
 submitDeadline : Workspace -> Time.Posix -> Cmd msg
@@ -769,7 +999,7 @@ view model =
         isAdmin =
             isAdminActiveForUser model.user
 
-        heading =
+        headingText =
             "UXAC Lean Coffee"
                 ++ (if isAdmin then
                         " (Admin)"
@@ -802,7 +1032,7 @@ view model =
                 , listItemSpacing
                 ]
             ]
-            ([ div
+            (div
                 [ css
                     [ Css.displayFlex
                     , Css.flexDirection Css.row
@@ -810,16 +1040,45 @@ view model =
                     ]
                 ]
                 [ logo
-                , h1 [ css [ Css.margin zero ] ] [ text heading ]
+                , h1 [ css [ Css.margin zero ] ] [ text headingText ]
                 ]
-             , settingsView model.user
-             ]
-                ++ errorView model.error
-                ++ discussionView model.user inDiscussion continuationVotes model model.timerInput
+                :: errorView model.error
+                ++ discussionView model.user
+                    inDiscussion
+                    continuationVotes
+                    model
+                    model.timerInput
+                    (Speakers.get model.userNames model.speakers)
+                    model.userNameInput
+                    model.userNames
+                    model.reminderInput
+                    model.remindersBeingEdited
+                    model.questionsBeingEdited
+                    model.questionInput
                 :: discussedTopics model.user discussedList
                 ++ [ topicEntry model.user model.newTopicInput ]
             )
         , topicsToVote model.user topicList (sortBarView model.votes model.topics)
+        , div
+            [ css
+                [ limitWidth
+                , Css.marginTop (rem 4)
+                , spaceChildren (Css.marginTop (rem 1))
+                ]
+            ]
+            [ settingsContainerView model.user model.userNameInput model.userNames
+            , Html.details
+                [ css
+                    [ limitWidth
+                    , detailsStyle
+                    ]
+                ]
+                (Html.summary []
+                    [ Html.text "Privacy Policy"
+                    ]
+                    :: privacyPolicyView
+                )
+            ]
         ]
 
 
@@ -965,87 +1224,284 @@ extract predicate list =
         |> Tuple.mapFirst List.head
 
 
-settingsView : Remote User -> Html Msg
-settingsView remoteUser =
-    Html.details [ css [ detailsStyle ] ]
-        [ Html.summary [] [ text "Settings & Privacy Policy" ]
-        , Html.div [ css [ Css.marginTop (rem 1) ] ]
-            (case remoteUser of
-                Loading ->
-                    [ Html.p [] [ text "Connecting…" ] ]
+settingsContainerView : Remote Login -> Maybe String -> UserNames.Store -> Html Msg
+settingsContainerView remoteUser maybeUserNameInput userNamesStore =
+    let
+        maybeOpen =
+            if currentUserHasName remoteUser userNamesStore then
+                []
 
-                Got (AnonymousUser id) ->
-                    [ Html.p [] [ text ("Logged in anonymously as " ++ id ++ ".") ]
-                    , Html.button
-                        [ css [ buttonStyle ]
-                        , onClick LogInWithGoogleClicked
-                        ]
-                        [ text "Log in via Google" ]
+            else
+                [ Attributes.attribute "open" "true" ]
+    in
+    Html.details (css [ detailsStyle ] :: maybeOpen)
+        [ Html.summary [] [ text "Settings" ]
+        , settingsView [ Css.marginTop (rem 1) ] { user = remoteUser, userNameInput = maybeUserNameInput } userNamesStore
+        ]
+
+
+currentUserHasName : Remote Login -> UserNames.Store -> Bool
+currentUserHasName remoteUser userNamesStore =
+    case ( remoteUser, userNamesStore ) of
+        ( Got user, Got userNames ) ->
+            let
+                id =
+                    getUserId user
+            in
+            case UserNames.get id userNames |> UserNames.extractName of
+                Just _ ->
+                    True
+
+                Nothing ->
+                    False
+
+        _ ->
+            True
+
+
+settingsView : List Css.Style -> { a | user : Remote Login, userNameInput : Maybe String } -> UserNames.Store -> Html Msg
+settingsView styles model userNamesStore =
+    let
+        section contents =
+            div
+                [ css
+                    [ Css.displayFlex
+                    , Css.flexDirection Css.column
+                    , Css.alignItems Css.start
+                    , spaceChildrenAndP (Css.marginTop (rem 0.5))
                     ]
-
-                Got (GoogleUser user) ->
-                    let
-                        settings =
-                            if Remote.toMaybe user.isAdmin |> Maybe.withDefault False then
-                                if isAdminActiveForUser remoteUser then
-                                    [ Html.button [ css [ buttonStyle ], onClick (SetAdmin False) ] [ text "Deactivate admin" ] ]
-
-                                else
-                                    [ Html.button [ css [ buttonStyle ], onClick (SetAdmin True) ] [ text "Activate admin" ] ]
-
-                            else
-                                [ Html.p [ css [ Css.fontStyle Css.italic ] ]
-                                    [ text "You do not have moderator rights, so you cannot activate the moderator tools." ]
-                                , Html.p [ css [ Css.fontStyle Css.italic ] ]
-                                    [ text "If you would like to become a moderator, ask someone who manages this app to add you to the list of moderators and tell them the email address you are logged in with."
-                                    ]
-                                ]
-
-                        logOutButton =
-                            Html.button [ css [ buttonStyle ], onClick LogOutClicked ] [ text "Log out" ]
-
-                        spaceChildrenAndP style =
-                            Css.batch
-                                [ spaceChildren style
-                                , Global.children
-                                    [ Global.p
-                                        [ Css.marginBottom zero
-                                        ]
-                                    ]
-                                ]
-                    in
-                    [ Html.div
-                        [ css
-                            [ Css.displayFlex
-                            , Css.flexDirection Css.column
-                            , Css.alignItems Css.start
-                            , spaceChildrenAndP (Css.marginTop (rem 2))
-                            ]
-                        ]
-                        (div
-                            [ css
-                                [ Css.displayFlex
-                                , Css.flexDirection Css.column
-                                , Css.alignItems Css.start
-                                , spaceChildrenAndP (Css.marginTop (rem 0.5))
-                                ]
-                            ]
-                            [ Html.p [] [ text ("Logged in via Google as " ++ user.email ++ ".") ]
-                            , logOutButton
-                            ]
-                            :: settings
-                        )
-                    ]
-            )
-        , Html.div [ css [ Css.marginTop (rem 2) ] ]
-            [ Html.h2 [] [ Html.text "Privacy Policy" ]
-            , Html.p [] [ Html.text "We use ", Html.a [ Attributes.href "https://firebase.google.com/" ] [ Html.text "Google Firebase" ], Html.text ". Specifically, we use its Authentication, Cloud Firestore and Hosting services. You can read their ", Html.a [ Attributes.href "https://firebase.google.com/terms/" ] [ Html.text "Terms of Service" ], Html.text ", their ", Html.a [ Attributes.href "https://firebase.google.com/terms/data-processing-terms" ] [ Html.text "Data Processing and Security Terms" ], Html.text ", and their support page on ", Html.a [ Attributes.href "https://firebase.google.com/support/privacy" ] [ Html.text "Privacy and Security" ], Html.text "." ]
-            , Html.p []
-                [ Html.text "When you open the app, we log you in using Firebase Authentication with an anonymous account to authenticate you. You can also optionally log in with a Google account so that we can give you moderator rights. This helps us ensure that only you can edit your topics and only admins can moderate the discussion."
                 ]
-            , Html.p [] [ Html.text "The data you send us is stored in Cloud Firestore. The app maintainers have access to it and may modify or delete it at their discretion. To request a copy, modification, or deletion of your data, please contact us at ", Html.a [ Attributes.href "mailto:uxac-lean-coffee@googlegroups.com" ] [ Html.text "uxac-lean-coffee@googlegroups.com" ], Html.text "." ]
+                contents
+    in
+    Html.div
+        [ css
+            ([ Css.displayFlex
+             , Css.flexDirection Css.column
+             , Css.alignItems Css.start
+             , spaceChildrenAndP (Css.marginTop (rem 1))
+             ]
+                ++ styles
+            )
+        ]
+        (case ( model.user, userNamesStore ) of
+            ( Got user, Got users ) ->
+                let
+                    id =
+                        getUserId user
+                in
+                section
+                    [ heading 2 "Your name"
+                    , userNameInputView (getUserNameInput model.userNameInput id users)
+                    ]
+                    :: (case user of
+                            AnonymousUser _ ->
+                                [ section
+                                    [ heading 3 "Login"
+                                    , Html.p [] [ text ("Logged in anonymously as " ++ id ++ ".") ]
+                                    , Html.button
+                                        [ css [ buttonStyle ]
+                                        , onClick LogInWithGoogleClicked
+                                        ]
+                                        [ text "Log in via Google" ]
+                                    ]
+                                ]
+
+                            GoogleUser googleUser ->
+                                let
+                                    settings =
+                                        if Remote.toMaybe googleUser.isAdmin |> Maybe.withDefault False then
+                                            if isAdminActiveForUser model.user then
+                                                [ Html.button [ css [ buttonStyle ], onClick (SetAdmin False) ] [ text "Deactivate admin" ] ]
+
+                                            else
+                                                [ Html.button [ css [ buttonStyle ], onClick (SetAdmin True) ] [ text "Activate admin" ] ]
+
+                                        else
+                                            [ Html.p [ css [ Css.fontStyle Css.italic ] ]
+                                                [ text "You do not have moderator rights, so you cannot activate the moderator tools." ]
+                                            , Html.p [ css [ Css.fontStyle Css.italic ] ]
+                                                [ text "If you would like to become a moderator, ask someone who manages this app to add you to the list of moderators and tell them the email address you are logged in with."
+                                                ]
+                                            ]
+
+                                    logOutButton =
+                                        Html.button [ css [ buttonStyle ], onClick LogOutClicked ] [ text "Log out" ]
+                                in
+                                [ section
+                                    ([ heading 3 "Login"
+                                     , Html.p [] [ text ("Logged in via Google as " ++ googleUser.email ++ ".") ]
+                                     , logOutButton
+                                     ]
+                                        ++ settings
+                                    )
+                                ]
+                       )
+
+            _ ->
+                [ Html.p [] [ text "Connecting…" ] ]
+        )
+
+
+spaceChildrenAndP : Css.Style -> Css.Style
+spaceChildrenAndP style =
+    Css.batch
+        [ spaceChildren style
+        , Global.children
+            [ Global.p
+                [ Css.marginBottom zero
+                ]
             ]
         ]
+
+
+type UserNameInput
+    = UserName String
+    | Input String UserNameWarning
+
+
+type UserNameWarning
+    = NoWarning
+    | MissingWarning
+    | CollisionWarning
+
+
+getUserNameInput : Maybe String -> UserId -> UserNames -> UserNameInput
+getUserNameInput maybeInput userId users =
+    let
+        loggedInUserName =
+            UserNames.get userId users
+    in
+    case loggedInUserName of
+        UniqueName name ->
+            case maybeInput of
+                Just input ->
+                    Input input NoWarning
+
+                Nothing ->
+                    UserName name
+
+        NameCollision name _ ->
+            Input (maybeInput |> Maybe.withDefault name) CollisionWarning
+
+        MissingName ->
+            Input (maybeInput |> Maybe.withDefault "") MissingWarning
+
+
+userNameInputView : UserNameInput -> Html Msg
+userNameInputView userNameInputValue =
+    case userNameInputValue of
+        UserName userName ->
+            Html.div
+                [ css
+                    [ Css.displayFlex
+                    , Css.flexDirection Css.column
+                    , Css.alignItems Css.flexStart
+                    , spaceChildren (Css.marginTop (rem 0.5))
+                    ]
+                ]
+                [ Html.div [] [ text userName ]
+                , Html.button [ css [ buttonStyle ], onClick ChangeUserNameClicked ] [ text "Change" ]
+                ]
+
+        Input input NoWarning ->
+            userNameInputForm input Nothing
+
+        Input input MissingWarning ->
+            userNameInputForm input (Just "Please enter a name so that others can recognize you in the speaker list.")
+
+        Input input CollisionWarning ->
+            userNameInputForm input (Just "Someone else is using the same name. Can you make yours unique?")
+
+
+userNameInputForm : String -> Maybe String -> Html Msg
+userNameInputForm input maybeHint =
+    Html.form
+        [ css [ fieldContainerStyle ]
+        , onSubmit SaveUserNameClicked
+        ]
+        [ div
+            [ css
+                [ fieldContainerStyle
+                ]
+            ]
+            ((case maybeHint of
+                Just hint ->
+                    [ Html.span
+                        [ css
+                            [ Css.fontStyle Css.italic
+                            , Css.position Css.relative
+                            , Css.before
+                                [ Css.property "content" "\"\""
+                                , Css.width (rem 0.4)
+                                , Css.height (pct 100)
+                                , Css.position Css.absolute
+                                , Css.left (rem -1.2)
+                                , Css.top zero
+                                , Css.borderRadius (rem 0.1)
+                                , Css.backgroundColor (Css.hsl 0 0.8 0.6)
+                                ]
+                            ]
+                        ]
+                        [ text hint ]
+                    ]
+
+                Nothing ->
+                    []
+             )
+                ++ [ Html.input
+                        [ value input
+                        , onInput UserNameChanged
+                        , Attributes.required True
+                        , css
+                            [ inputStyle
+                            , Css.marginTop (rem 0.3)
+                            ]
+                        ]
+                        []
+                   ]
+            )
+        , Html.input [ type_ "submit", value "Save", css [ buttonStyle, Css.marginTop (rem 1) ] ] []
+        ]
+
+
+fieldContainerStyle : Css.Style
+fieldContainerStyle =
+    Css.batch
+        [ Css.displayFlex
+        , Css.flexDirection Css.column
+        , Css.alignItems Css.flexStart
+        , spaceChildren (Css.marginTop (rem 0.5))
+        , Css.width (pct 100)
+        ]
+
+
+privacyPolicyView : List (Html Msg)
+privacyPolicyView =
+    [ Html.p [] [ Html.text "We use ", Html.a [ Attributes.href "https://firebase.google.com/" ] [ Html.text "Google Firebase" ], Html.text ". Specifically, we use its Authentication, Cloud Firestore and Hosting services. You can read their ", Html.a [ Attributes.href "https://firebase.google.com/terms/" ] [ Html.text "Terms of Service" ], Html.text ", their ", Html.a [ Attributes.href "https://firebase.google.com/terms/data-processing-terms" ] [ Html.text "Data Processing and Security Terms" ], Html.text ", and their support page on ", Html.a [ Attributes.href "https://firebase.google.com/support/privacy" ] [ Html.text "Privacy and Security" ], Html.text "." ]
+    , Html.p []
+        [ Html.text "When you open the app, we log you in using Firebase Authentication with an anonymous account to authenticate you. You can also optionally log in with a Google account so that we can give you moderator rights. This helps us ensure that only you can edit your topics and only admins can moderate the discussion."
+        ]
+    , Html.p [] [ Html.text "The data you send us is stored in Cloud Firestore. The app maintainers have access to it and may modify or delete it at their discretion. To request a copy, modification, or deletion of your data, please contact us at ", Html.a [ Attributes.href "mailto:uxac-lean-coffee@googlegroups.com" ] [ Html.text "uxac-lean-coffee@googlegroups.com" ], Html.text "." ]
+    ]
+
+
+heading : Int -> String -> Html Msg
+heading level title =
+    let
+        headingCss =
+            css
+                [ Css.margin zero
+                ]
+    in
+    case level of
+        1 ->
+            Html.h1 [ headingCss ] [ text title ]
+
+        2 ->
+            Html.h2 [ headingCss ] [ text title ]
+
+        _ ->
+            Html.h3 [ headingCss ] [ text title ]
 
 
 errorView : Maybe Error -> List (Html Msg)
@@ -1100,13 +1556,43 @@ errorView maybeError =
 
 
 discussionView :
-    Remote User
+    Remote Login
     -> Maybe TopicWithVotes
     -> Maybe (List ContinuationVote)
     -> { b | now : Maybe Time.Posix, deadline : Maybe Time.Posix }
     -> String
+    -> Remote SpeakersQueue
+    -> Maybe String
+    -> UserNames.Store
+    -> String
+    -> Dict ContributionId String
+    -> Maybe ( ContributionId, Dict ContributionId String )
+    -> String
     -> Html Msg
-discussionView creds maybeDiscussedTopic continuationVotes times timerInput =
+discussionView remoteLogin maybeDiscussedTopic continuationVotes times timerInput remoteSpeakers maybeUserNameInput userNamesStore reminderInput remindersBeingEdited questionsBeingEdited questionInput =
+    let
+        userNameInput =
+            case ( remoteLogin, userNamesStore ) of
+                ( Got user, Got userNames ) ->
+                    let
+                        userNameInputValue =
+                            getUserNameInput maybeUserNameInput (getUserId user) userNames
+                    in
+                    case userNameInputValue of
+                        Input _ MissingWarning ->
+                            [ userNameInputView userNameInputValue
+                            ]
+
+                        Input _ CollisionWarning ->
+                            [ userNameInputView userNameInputValue
+                            ]
+
+                        _ ->
+                            []
+
+                _ ->
+                    []
+    in
     div
         [ css
             [ borderRadius
@@ -1118,7 +1604,7 @@ discussionView creds maybeDiscussedTopic continuationVotes times timerInput =
         (h2 [ css [ Css.margin zero ] ] [ text "In discussion" ]
             :: (case maybeDiscussedTopic of
                     Just topic ->
-                        [ topicToDiscussCard creds topic
+                        [ topicToDiscussCard remoteLogin topic
                         ]
 
                     Nothing ->
@@ -1139,13 +1625,21 @@ discussionView creds maybeDiscussedTopic continuationVotes times timerInput =
                             ]
                         ]
                )
-            ++ remainingTime creds times timerInput
-            :: continuationVote creds continuationVotes
+            ++ remainingTime remoteLogin times timerInput
+            :: continuationVote remoteLogin continuationVotes
+            ++ speakerSectionView remoteLogin
+                remoteSpeakers
+                (getTimerState times)
+                reminderInput
+                remindersBeingEdited
+                questionsBeingEdited
+                questionInput
+            :: userNameInput
         )
 
 
 remainingTime :
-    Remote User
+    Remote Login
     -> { b | now : Maybe Time.Posix, deadline : Maybe Time.Posix }
     -> String
     -> Html Msg
@@ -1182,8 +1676,7 @@ remainingTimeDisplay times =
             Just deadline ->
                 let
                     difference =
-                        Time.posixToMillis deadline
-                            - Time.posixToMillis times.now
+                        calculateRemainingMilliseconds { now = times.now, deadline = deadline }
 
                     differenceMinutes =
                         ceiling (toFloat difference / (60 * 1000))
@@ -1243,6 +1736,38 @@ remainingTimeDisplay times =
         ]
 
 
+calculateRemainingMilliseconds : { now : Time.Posix, deadline : Time.Posix } -> Int
+calculateRemainingMilliseconds times =
+    Time.posixToMillis times.deadline
+        - Time.posixToMillis times.now
+
+
+type TimerState
+    = LoadingTimer
+    | NotStarted
+    | Running
+    | Ended
+
+
+getTimerState : { a | now : Maybe Time.Posix, deadline : Maybe Time.Posix } -> TimerState
+getTimerState times =
+    case times.now of
+        Nothing ->
+            LoadingTimer
+
+        Just now ->
+            case times.deadline of
+                Nothing ->
+                    NotStarted
+
+                Just deadline ->
+                    if calculateRemainingMilliseconds { now = now, deadline = deadline } > 0 then
+                        Running
+
+                    else
+                        Ended
+
+
 atLeast : Int -> Int -> Int
 atLeast minimum value =
     max minimum value
@@ -1257,8 +1782,8 @@ remainingTimeInput currentInput =
             , Css.alignItems Css.center
             ]
         ]
-        [ form [ onSubmit TimerStarted ]
-            [ input
+        [ Html.form [ onSubmit TimerStarted ]
+            [ Html.input
                 [ type_ "number"
                 , value currentInput
                 , onInput TimerInputChanged
@@ -1267,7 +1792,7 @@ remainingTimeInput currentInput =
                 , css [ inputStyle ]
                 ]
                 []
-            , input
+            , Html.input
                 [ type_ "submit"
                 , value "Start timer"
                 , css
@@ -1288,7 +1813,7 @@ backgroundColor =
     Css.backgroundColor (Css.hsl primaryHue 0.2 0.95)
 
 
-discussedTopics : Remote User -> List TopicWithVotes -> List (Html Msg)
+discussedTopics : Remote Login -> List TopicWithVotes -> List (Html Msg)
 discussedTopics model topics =
     case List.length topics of
         0 ->
@@ -1337,7 +1862,7 @@ detailsStyle =
         ]
 
 
-continuationVote : Remote User -> Maybe (List ContinuationVote) -> List (Html Msg)
+continuationVote : Remote Login -> Maybe (List ContinuationVote) -> List (Html Msg)
 continuationVote remoteUser maybeContinuationVotes =
     case remoteUser of
         Loading ->
@@ -1379,7 +1904,7 @@ continuationVote remoteUser maybeContinuationVotes =
             maybeAdminButtons ++ maybeVoteButtons
 
 
-continuationVoteButtons : User -> List ContinuationVote -> Html Msg
+continuationVoteButtons : Login -> List ContinuationVote -> Html Msg
 continuationVoteButtons user continuationVotes =
     let
         ( moveOnVotes, remainingVotes ) =
@@ -1422,7 +1947,392 @@ continuationVoteButtons user continuationVotes =
         [ stayButton, abstainButton, moveOnButton ]
 
 
-topicEntry : Remote User -> String -> Html Msg
+speakerSectionView : Remote Login -> Remote SpeakersQueue -> TimerState -> String -> Dict ContributionId String -> Maybe ( ContributionId, Dict ContributionId String ) -> String -> Html Msg
+speakerSectionView remoteLogin remoteSpeakers timerState reminderInput remindersBeingEdited questionsBeingEdited questionInput =
+    Html.div
+        [ css
+            [ spaceChildren (Css.marginTop (rem 0.5))
+            ]
+        ]
+        (case ( remoteLogin, remoteSpeakers ) of
+            ( Got login, Got maybeSpeakers ) ->
+                let
+                    timerEnded =
+                        case timerState of
+                            Ended ->
+                                True
+
+                            _ ->
+                                False
+
+                    disabled =
+                        if timerEnded || maybeSpeakers.queueing then
+                            [ Attributes.disabled True ]
+
+                        else
+                            []
+
+                    template above below =
+                        [ Html.div
+                            [ css
+                                [ Css.marginBottom (rem 0.5)
+                                ]
+                            ]
+                            [ above
+                            ]
+                        , Html.form
+                            [ onSubmit EnqueueClicked
+                            , css
+                                [ Css.displayFlex
+                                , Css.property "gap" "0.5rem"
+                                ]
+                            ]
+                            [ Html.input [ value reminderInput, onInput ReminderInputChanged, css [ inputStyle ] ] []
+                            , Html.input
+                                ([ type_ "submit"
+                                 , value "Enqueue"
+                                 , css
+                                    [ buttonStyle
+                                    , loadingIndicator maybeSpeakers.queueing
+                                    ]
+                                 ]
+                                    ++ disabled
+                                )
+                                []
+                            ]
+                        ]
+                            ++ below
+                in
+                case maybeSpeakers.speakers of
+                    Just speakers ->
+                        template
+                            (currentSpeakerView login
+                                speakers.current
+                                remindersBeingEdited
+                                questionsBeingEdited
+                                questionInput
+                                timerState
+                            )
+                            (followUpSpeakersView login
+                                speakers.following
+                                remindersBeingEdited
+                            )
+
+                    Nothing ->
+                        template (Html.div [] [ text "No speakers in queue yet." ])
+                            []
+
+            _ ->
+                [ text "Loading speaker list…" ]
+        )
+
+
+loadingIndicator : Bool -> Css.Style
+loadingIndicator active =
+    let
+        borderColor =
+            Css.hsla 0 0 0 0.5
+    in
+    Css.batch
+        [ Css.after
+            ([ Css.property "content" "\" \""
+             , Css.display Css.inlineBlock
+             , Css.height (rem 0.4)
+             , Css.borderStyle Css.solid
+             , Css.borderRadius (pct 50)
+             , Css.borderColor borderColor
+             , Css.borderRightColor Css.transparent
+             , Css.animationName
+                (Animations.keyframes
+                    [ ( 0, [ Animations.transform [ Css.rotate (Css.deg 0) ] ] )
+                    , ( 100, [ Animations.transform [ Css.rotate (Css.deg 360) ] ] )
+                    ]
+                )
+             , Css.animationDuration (Css.sec 1)
+             , Css.property "animation-timing-function" "linear"
+             , Css.property "animation-iteration-count" "infinite"
+             ]
+                ++ (if active then
+                        let
+                            duration =
+                                500
+
+                            delay =
+                                500
+                        in
+                        [ Css.width (rem 0.4)
+                        , Css.height (rem 0.4)
+                        , Css.opacity (num 1)
+                        , Css.marginLeft (rem 0.25)
+                        , Css.borderWidth (rem 0.15)
+                        , Transitions.transition
+                            [ Transitions.opacity2 duration delay
+                            , Transitions.width2 duration delay
+                            , Transitions.margin2 duration delay
+                            , Transitions.borderWidth2 duration delay
+                            ]
+                        ]
+
+                    else
+                        [ Css.width Css.zero
+                        , Css.height Css.zero
+                        , Css.opacity Css.zero
+                        , Css.marginLeft Css.zero
+                        , Css.borderWidth Css.zero
+                        ]
+                   )
+            )
+        ]
+
+
+currentSpeakerView :
+    Login
+    -> CurrentSpeaker
+    -> Dict ContributionId String
+    -> Maybe ( ContributionId, Dict ContributionId String )
+    -> String
+    -> TimerState
+    -> Html Msg
+currentSpeakerView login current remindersBeingEdited questionsBeingEdited questionInput timerState =
+    let
+        ( activeContributionId, activeSpeaker, reminder ) =
+            current.speaker
+
+        currentUserId =
+            getUserId login
+
+        canModify speaker_ =
+            currentUserId
+                == speaker_.userId
+                || isAdminActiveForUser (Got login)
+
+        timerEnded =
+            case timerState of
+                Ended ->
+                    True
+
+                _ ->
+                    False
+
+        disabled =
+            if timerEnded || current.questionsQueueing then
+                [ Attributes.disabled True ]
+
+            else
+                []
+    in
+    card
+        []
+        []
+        (speakerContributionView
+            { canModify = canModify activeSpeaker && List.isEmpty current.questions
+            , msgs =
+                { done = CurrentSpeakerDoneClicked activeContributionId
+                , edit = ReminderEditClicked activeContributionId
+                , changed = ReminderInputForContributionChanged activeContributionId
+                , save = ReminderSaveClicked activeContributionId
+                }
+            , label = "Done"
+            , speakerName = Speakers.displayName activeSpeaker
+            , rawReminder = reminder
+            , maybeReminderInput = Dict.get activeContributionId remindersBeingEdited
+            }
+            ++ [ let
+                    getQuestionInput questionId =
+                        questionsBeingEdited
+                            |> Maybe.andThen
+                                (\( parent, questions ) ->
+                                    if parent == activeContributionId then
+                                        Dict.get questionId questions
+
+                                    else
+                                        Nothing
+                                )
+                 in
+                 Html.ol []
+                    (List.map
+                        (\( questionId, asker, question ) ->
+                            Html.li []
+                                (speakerContributionView
+                                    { canModify = canModify asker
+                                    , msgs =
+                                        { done = QuestionDoneClicked questionId
+                                        , edit = QuestionEditClicked activeContributionId questionId
+                                        , changed = QuestionInputChanged questionId
+                                        , save = QuestionSaveClicked activeContributionId questionId
+                                        }
+                                    , label = "Done"
+                                    , speakerName = Speakers.displayName asker
+                                    , rawReminder = question
+                                    , maybeReminderInput = getQuestionInput questionId
+                                    }
+                                )
+                        )
+                        current.questions
+                    )
+               , Html.form [ onSubmit AskQuestionClicked, css [ Css.displayFlex, Css.property "gap" "0.5rem" ] ]
+                    [ Html.input [ value questionInput, onInput NewQuestionInputChanged, css [ inputStyle ] ] []
+                    , Html.input
+                        ([ type_ "submit"
+                         , value "Ask"
+                         , css
+                            [ buttonStyle
+                            , loadingIndicator current.questionsQueueing
+                            ]
+                         ]
+                            ++ disabled
+                        )
+                        []
+                    ]
+               ]
+        )
+
+
+followUpSpeakersView : Login -> SpeakerList -> Dict ContributionId String -> List (Html Msg)
+followUpSpeakersView login followUpSpeakers remindersBeingEdited =
+    let
+        followUps =
+            followUpSpeakers
+
+        renderEntry ( contributionId, speaker, reminder ) =
+            let
+                currentUserId =
+                    getUserId login
+
+                canModify =
+                    currentUserId == speaker.userId
+            in
+            Html.li []
+                (speakerContributionView
+                    { canModify = canModify
+                    , msgs =
+                        { done = UnqueueClicked contributionId
+                        , edit = ReminderEditClicked contributionId
+                        , changed = ReminderInputForContributionChanged contributionId
+                        , save = ReminderSaveClicked contributionId
+                        }
+                    , label = "Unqueue"
+                    , speakerName = Speakers.displayName speaker
+                    , rawReminder = reminder
+                    , maybeReminderInput = Dict.get contributionId remindersBeingEdited
+                    }
+                )
+    in
+    if List.isEmpty followUps then
+        []
+
+    else
+        [ Html.div []
+            [ Html.ol
+                [ Attributes.start 2
+                , css
+                    [ Css.margin zero
+                    , Css.marginTop (rem 0.5)
+                    , spaceChildren (Css.marginTop (rem 0.5))
+                    ]
+                ]
+                (List.map renderEntry followUps)
+            ]
+        ]
+
+
+speakerContributionView :
+    { canModify : Bool
+    , msgs :
+        { done : Msg
+        , edit : String -> Msg
+        , changed : String -> Msg
+        , save : Msg
+        }
+    , label : String
+    , speakerName : SpeakerName
+    , rawReminder : String
+    , maybeReminderInput : Maybe String
+    }
+    -> List (Html Msg)
+speakerContributionView { canModify, msgs, label, speakerName, rawReminder, maybeReminderInput } =
+    let
+        reminder =
+            String.trim rawReminder
+
+        nameView =
+            case speakerName of
+                CustomName n ->
+                    text n
+
+                GeneratedName n ->
+                    span [ css [ Css.fontStyle Css.italic ] ] [ text n ]
+
+        doneButton =
+            Html.button
+                [ css [ buttonStyle ]
+                , onClick msgs.done
+                ]
+                [ text label ]
+
+        reminderEditButton =
+            Html.button
+                [ css [ buttonStyle ]
+                , onClick (msgs.edit reminder)
+                ]
+                [ text "Edit" ]
+
+        toolbar buttons =
+            if canModify then
+                [ Html.span
+                    [ css
+                        [ Css.display Css.inlineFlex
+                        , Css.property "gap" "0.5rem"
+                        ]
+                    ]
+                    buttons
+                ]
+
+            else
+                []
+    in
+    case maybeReminderInput of
+        Just reminderInput ->
+            [ nameView
+            , text ": "
+            , Html.form
+                [ onSubmit msgs.save
+                , css
+                    [ Css.display Css.inlineFlex
+                    , Css.alignItems Css.center
+                    , Css.property "gap" "0.5rem"
+                    , Css.marginRight (rem 0.5)
+                    ]
+                ]
+                [ Html.input
+                    [ value reminderInput
+                    , onInput msgs.changed
+                    , css [ inputStyle ]
+                    ]
+                    []
+                , Html.input [ type_ "submit", value "Save", css [ buttonStyle ] ] []
+                ]
+            ]
+                ++ toolbar [ doneButton ]
+
+        Nothing ->
+            let
+                reminderView =
+                    if String.isEmpty reminder then
+                        []
+
+                    else
+                        [ text (": " ++ reminder) ]
+            in
+            nameView
+                :: reminderView
+                -- Add spacing that also works when the line breaks
+                ++ (text " "
+                        :: toolbar [ reminderEditButton, doneButton ]
+                   )
+
+
+topicEntry : Remote Login -> String -> Html Msg
 topicEntry user newTopicInput =
     div
         [ css
@@ -1434,7 +2344,7 @@ topicEntry user newTopicInput =
         [ submitForm user newTopicInput ]
 
 
-topicsToVote : Remote User -> Remote (List TopicWithVotes) -> Html Msg -> Html Msg
+topicsToVote : Remote Login -> Remote (List TopicWithVotes) -> Html Msg -> Html Msg
 topicsToVote creds remoteTopics toolbar =
     div
         [ css
@@ -1497,7 +2407,7 @@ topicsToVote creds remoteTopics toolbar =
         ]
 
 
-topicsToVoteList : Remote User -> List TopicWithVotes -> Html Msg
+topicsToVoteList : Remote Login -> List TopicWithVotes -> Html Msg
 topicsToVoteList creds topics =
     let
         breakpoint =
@@ -1628,55 +2538,29 @@ sortButton =
     button [ css [ buttonStyle ], onClick SortTopics ] [ text "Sort" ]
 
 
-topicToDiscussCard : Remote User -> TopicWithVotes -> Html Msg
+topicToDiscussCard : Remote Login -> TopicWithVotes -> Html Msg
 topicToDiscussCard remoteUser ( topicId, entry ) =
     let
         voteCount =
             List.length entry.votes
 
-        maybeDeleteButton =
-            if isAdminActiveForUser remoteUser then
-                [ deleteButton topicId
-                ]
-
-            else
-                []
-
         cardButtons =
-            votesIndicator voteCount :: maybeDeleteButton
+            votesIndicator voteCount
+                :: (if isAdminActiveForUser remoteUser then
+                        [ button
+                            [ css [ buttonStyle ]
+                            , onClick MoveToDiscussedClicked
+                            ]
+                            [ text "Finish discussion" ]
+                        ]
 
-        maybeMoveSection =
-            if isAdminActiveForUser remoteUser then
-                [ div
-                    [ css
-                        [ Css.displayFlex
-                        , Css.flexDirection Css.row
-                        , Css.alignItems Css.center
-                        , spaceChildren (Css.marginLeft (rem 0.5))
-                        ]
-                    ]
-                    [ Html.span [] [ text "Move this to:" ]
-                    , button
-                        [ css [ buttonStyle ]
-                        , onClick MoveToDiscussedClicked
-                        ]
-                        [ text "Discussed topics" ]
-                    , button
-                        [ css [ buttonStyle ]
-                        , onClick MoveToSuggestedClicked
-                        ]
-                        [ text "Suggested topics" ]
-                    ]
-                ]
-
-            else
-                []
+                    else
+                        []
+                   )
 
         toolbar =
             [ div [ css [ spaceChildren (Css.marginTop (rem 0.5)) ] ]
-                (toolbarRow cardButtons
-                    :: maybeMoveSection
-                )
+                [ toolbarRow cardButtons ]
             ]
     in
     topicCard
@@ -1687,7 +2571,7 @@ topicToDiscussCard remoteUser ( topicId, entry ) =
         }
 
 
-topicToVoteCard : Remote User -> TopicWithVotes -> Html Msg
+topicToVoteCard : Remote Login -> TopicWithVotes -> Html Msg
 topicToVoteCard remoteUser ( topicId, entry ) =
     let
         maybeDiscussButton =
@@ -1703,7 +2587,7 @@ topicToVoteCard remoteUser ( topicId, entry ) =
         content =
             case entry.beingEdited of
                 Just edit ->
-                    form
+                    Html.form
                         [ css
                             [ Css.displayFlex
                             , Css.justifyContent Css.spaceBetween
@@ -1724,7 +2608,7 @@ topicToVoteCard remoteUser ( topicId, entry ) =
                                 ]
                             ]
                             []
-                        , div [ css [ Css.marginLeft (rem 1) ] ] [ saveButton topicId ]
+                        , Html.input [ type_ "submit", value "Save", css [ buttonStyle, Css.marginLeft (rem 1) ] ] []
                         ]
 
                 Nothing ->
@@ -1788,7 +2672,7 @@ topicToVoteCard remoteUser ( topicId, entry ) =
         }
 
 
-finishedTopicCard : Remote User -> TopicWithVotes -> Html Msg
+finishedTopicCard : Remote Login -> TopicWithVotes -> Html Msg
 finishedTopicCard creds ( topicId, entry ) =
     let
         voteCount =
@@ -1817,7 +2701,7 @@ finishedTopicCard creds ( topicId, entry ) =
         }
 
 
-maybeTopicVoteButton : Remote User -> TopicWithVotes -> List (Html Msg)
+maybeTopicVoteButton : Remote Login -> TopicWithVotes -> List (Html Msg)
 maybeTopicVoteButton remoteUser ( topicId, entry ) =
     case remoteUser of
         Loading ->
@@ -1838,7 +2722,7 @@ maybeTopicVoteButton remoteUser ( topicId, entry ) =
             ]
 
 
-voteButton : User -> List UserId -> { upvote : Msg, downvote : Msg } -> (Int -> Html Msg) -> Html Msg
+voteButton : Login -> List UserId -> { upvote : Msg, downvote : Msg } -> (Int -> Html Msg) -> Html Msg
 voteButton user votes msgs content =
     let
         voteCount =
@@ -1887,15 +2771,6 @@ votesText count =
         ("👍 " ++ String.fromInt count)
 
 
-saveButton : TopicId -> Html Msg
-saveButton topicId =
-    button
-        [ onClick (SaveTopicClicked topicId)
-        , css [ buttonStyle ]
-        ]
-        [ text "Save" ]
-
-
 editButton : TopicId -> Html Msg
 editButton topicId =
     button
@@ -1914,7 +2789,7 @@ deleteButton topicId =
         [ text "Delete" ]
 
 
-mayModify : Remote User -> UserId -> Bool
+mayModify : Remote Login -> UserId -> Bool
 mayModify remoteUser creator =
     if isAdminActiveForUser remoteUser then
         True
@@ -1963,7 +2838,7 @@ toolbarRow content =
         content
 
 
-submitForm : Remote User -> String -> Html Msg
+submitForm : Remote Login -> String -> Html Msg
 submitForm fetchedUser currentInput =
     case fetchedUser of
         Loading ->
@@ -1973,15 +2848,15 @@ submitForm fetchedUser currentInput =
             newTopicForm user currentInput
 
 
-newTopicForm : User -> String -> Html Msg
+newTopicForm : Login -> String -> Html Msg
 newTopicForm user currentInput =
-    form
+    Html.form
         [ css [ Css.displayFlex, Css.flexDirection Css.column, Css.alignItems Css.flexStart ]
         , onSubmit (SaveTopic user)
         ]
-        [ label [ css [ Css.displayFlex, Css.flexDirection Css.column, Css.width (pct 100) ] ]
+        [ Html.label [ css [ Css.displayFlex, Css.flexDirection Css.column, Css.width (pct 100) ] ]
             [ text "Add a topic"
-            , input
+            , Html.input
                 [ value currentInput
                 , onInput NewTopicInputChanged
                 , css
@@ -1991,7 +2866,7 @@ newTopicForm user currentInput =
                 ]
                 []
             ]
-        , input [ type_ "submit", value "Submit", css [ buttonStyle, Css.marginTop (rem 1) ] ] []
+        , Html.input [ type_ "submit", value "Submit", css [ buttonStyle, Css.marginTop (rem 1) ] ] []
         ]
 
 
@@ -2111,15 +2986,6 @@ discussedCollectionPath workspace =
         |> prependWorkspace workspace
 
 
-prependWorkspace : Workspace -> Path -> Path
-prependWorkspace workspace path =
-    let
-        serializedWorkspace =
-            "_" ++ workspace
-    in
-    [ "workspaces", serializedWorkspace ] ++ path
-
-
 firestoreSubscriptionsCmd : Workspace -> Cmd Msg
 firestoreSubscriptionsCmd workspace =
     Cmd.batch
@@ -2130,6 +2996,9 @@ firestoreSubscriptionsCmd workspace =
         , subscribe { kind = Collection, path = continuationVoteCollectionPath workspace, tag = ContinuationVotesTag }
         , subscribe { kind = Collection, path = discussedCollectionPath workspace, tag = DiscussedTag }
         , subscribe { kind = Doc, path = discussionDeadlineDocPath workspace, tag = DeadlineTag }
+        , subscribe { kind = Collection, path = UserNames.usersCollectionPath workspace, tag = UserNamesTag }
+        , subscribe { kind = Collection, path = Speakers.speakerCollectionPath workspace, tag = SpeakersTag }
+        , subscribe { kind = Collection, path = Speakers.questionCollectionPath workspace, tag = QuestionsTag }
         ]
 
 
@@ -2181,16 +3050,6 @@ encodeSubscriptionKind kind =
     Encode.string raw
 
 
-type alias Path =
-    List String
-
-
-encodePath : Path -> Encode.Value
-encodePath path =
-    String.join "/" path
-        |> Encode.string
-
-
 type SubscriptionTag
     = TopicChangesTag
     | VotesTag
@@ -2199,6 +3058,9 @@ type SubscriptionTag
     | ContinuationVotesTag
     | DiscussedTag
     | DeadlineTag
+    | UserNamesTag
+    | SpeakersTag
+    | QuestionsTag
 
 
 encodeSubscriptionTag : SubscriptionTag -> Encode.Value
@@ -2226,6 +3088,15 @@ encodeSubscriptionTag tag =
 
                 DeadlineTag ->
                     "deadline"
+
+                UserNamesTag ->
+                    "users"
+
+                SpeakersTag ->
+                    "speakers"
+
+                QuestionsTag ->
+                    "questions"
     in
     Encode.string raw
 
@@ -2256,6 +3127,15 @@ subscriptionTagDecoder =
 
                     "deadline" ->
                         Decode.succeed DeadlineTag
+
+                    "users" ->
+                        Decode.succeed UserNamesTag
+
+                    "speakers" ->
+                        Decode.succeed SpeakersTag
+
+                    "questions" ->
+                        Decode.succeed QuestionsTag
 
                     _ ->
                         Decode.fail "Invalid subscription kind"
@@ -2309,6 +3189,18 @@ parseFirestoreSubscription value =
                                         DeadlineTag ->
                                             deadlineDecoder
                                                 |> Decode.map DeadlineReceived
+
+                                        UserNamesTag ->
+                                            UserNames.userNamesDecoder
+                                                |> Decode.map UsersReceived
+
+                                        SpeakersTag ->
+                                            Speakers.speakersDecoder
+                                                |> Decode.map SpeakersReceived
+
+                                        QuestionsTag ->
+                                            Speakers.speakersDecoder
+                                                |> Decode.map QuestionsReceived
                             in
                             Decode.field "data" dataDecoder
                         )
@@ -2356,49 +3248,6 @@ changeTypeDecoder =
                     _ ->
                         Decode.fail "Invalid change type"
             )
-
-
-type alias InsertDocInfo =
-    { collectionPath : Path, doc : Encode.Value }
-
-
-insertDoc : InsertDocInfo -> Cmd msg
-insertDoc info =
-    Encode.object
-        [ ( "path", encodePath info.collectionPath )
-        , ( "doc", info.doc )
-        ]
-        |> insertDoc_
-
-
-port insertDoc_ : Encode.Value -> Cmd msg
-
-
-type alias SetDocInfo =
-    { docPath : Path, doc : Encode.Value }
-
-
-setDoc : SetDocInfo -> Cmd msg
-setDoc info =
-    Encode.object
-        [ ( "path", encodePath info.docPath )
-        , ( "doc", info.doc )
-        ]
-        |> setDoc_
-
-
-port setDoc_ : Encode.Value -> Cmd msg
-
-
-deleteDocs : List Path -> Cmd msg
-deleteDocs paths =
-    Encode.object
-        [ ( "paths", Encode.list encodePath paths )
-        ]
-        |> deleteDocs_
-
-
-port deleteDocs_ : Encode.Value -> Cmd msg
 
 
 port receiveUser_ : (Encode.Value -> msg) -> Sub msg
@@ -2476,12 +3325,7 @@ topicDecoder =
         (dataField "createdAt" (Decode.nullable timestampDecoder))
 
 
-dataField : String -> Decoder a -> Decoder a
-dataField field decoder =
-    Decode.field "data" (Decode.field field decoder)
-
-
-userDecoder : Decoder User
+userDecoder : Decoder Login
 userDecoder =
     Decode.field "provider" Decode.string
         |> Decode.andThen
@@ -2527,24 +3371,6 @@ timestampEncoder time =
         [ ( "seconds", Encode.int seconds )
         , ( "nanoseconds", Encode.int nanoseconds )
         ]
-
-
-timestampDecoder : Decoder Time.Posix
-timestampDecoder =
-    Decode.map2
-        (\seconds nanoseconds ->
-            let
-                {- The nanoseconds count the fractions of seconds.
-                   See https://firebase.google.com/docs/reference/js/firebase.firestore.Timestamp.
-                -}
-                milliseconds =
-                    (toFloat seconds * 1000)
-                        + (toFloat nanoseconds / 1000000)
-            in
-            Time.millisToPosix (round milliseconds)
-        )
-        (Decode.field "seconds" Decode.int)
-        (Decode.field "nanoseconds" Decode.int)
 
 
 votesDecoder : Decoder Votes

@@ -19,4 +19,9 @@ dist
 
 .env
 
-.firebase
+# Firebase emulator files
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+
+firebase/state
