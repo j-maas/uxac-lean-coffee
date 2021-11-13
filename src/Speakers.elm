@@ -95,7 +95,6 @@ removeQuestion workspace speakerContributionId =
         ]
 
 
-
 -- BACKEND
 
 

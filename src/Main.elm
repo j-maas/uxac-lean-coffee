@@ -55,6 +55,7 @@ type alias Model =
     , user : Remote Login
     , userNames : UserNames.Store
     , speakers : Speakers.Store
+    , remindersBeingEdited : Dict ContributionId String
     , userNameInput : Maybe String
     , error : Maybe Error
     , workspace : Workspace
@@ -252,6 +253,7 @@ init flags =
       , userNameInput = Nothing
       , userNames = UserNames.loading
       , speakers = Speakers.loading
+      , remindersBeingEdited = Dict.empty
       , error = Nothing
       , workspace = workspace
       , uuidSeeds = uuidSeeds
@@ -1977,20 +1979,28 @@ currentSpeakerView login current timerState =
     card
         []
         []
-        (speakerContributionView (canModify activeSpeaker && List.isEmpty current.questions)
-            (CurrentSpeakerDoneClicked activeContributionId)
-            "Done"
-            (Speakers.displayName activeSpeaker)
-            reminder
+        (speakerContributionView
+            { canModify = canModify activeSpeaker && List.isEmpty current.questions
+            , doneMsg = CurrentSpeakerDoneClicked activeContributionId
+            , editMsg = CurrentSpeakerDoneClicked activeContributionId
+            , label = "Done"
+            , speakerName = Speakers.displayName activeSpeaker
+            , rawReminder = reminder
+            , reminderInput = Nothing
+            }
             ++ [ Html.ol []
                     (List.map
                         (\( questionId, asker, question ) ->
                             Html.li []
-                                (speakerContributionView (canModify asker)
-                                    (QuestionDoneClicked questionId)
-                                    "Done"
-                                    (Speakers.displayName asker)
-                                    question
+                                (speakerContributionView
+                                    { canModify = canModify asker
+                                    , doneMsg = QuestionDoneClicked questionId
+                                    , editMsg = QuestionDoneClicked questionId
+                                    , label = "Done"
+                                    , speakerName = Speakers.displayName asker
+                                    , rawReminder = question
+                                    , reminderInput = Nothing
+                                    }
                                 )
                         )
                         current.questions
@@ -2020,11 +2030,14 @@ followUpSpeakersView login followUpSpeakers =
             in
             Html.li []
                 (speakerContributionView
-                    canModify
-                    (UnqueueClicked contributionId)
-                    "Unqueue"
-                    (Speakers.displayName speaker)
-                    reminder
+                    { canModify = canModify
+                    , doneMsg = UnqueueClicked contributionId
+                    , editMsg = UnqueueClicked contributionId
+                    , label = "Unqueue"
+                    , speakerName = Speakers.displayName speaker
+                    , rawReminder = reminder
+                    , reminderInput = Nothing
+                    }
                 )
     in
     if List.isEmpty followUps then
@@ -2045,8 +2058,17 @@ followUpSpeakersView login followUpSpeakers =
         ]
 
 
-speakerContributionView : Bool -> Msg -> String -> SpeakerName -> String -> List (Html Msg)
-speakerContributionView canModify msg label speakerName rawReminder =
+speakerContributionView :
+    { canModify : Bool
+    , doneMsg : Msg
+    , editMsg : Msg
+    , label : String
+    , speakerName : SpeakerName
+    , rawReminder : String
+    , reminderInput : Maybe String
+    }
+    -> List (Html Msg)
+speakerContributionView { canModify, doneMsg, editMsg, label, speakerName, rawReminder, reminderInput } =
     let
         reminder name =
             case String.trim rawReminder of
@@ -2068,11 +2090,23 @@ speakerContributionView canModify msg label speakerName rawReminder =
         -- Add spacing that also works when the line breaks
         :: text " "
         :: (if canModify then
-                [ Html.button
-                    [ css [ buttonStyle ]
-                    , onClick msg
+                [ Html.span
+                    [ css
+                        [ Css.display Css.inlineFlex
+                        , Css.property "gap" "0.5rem"
+                        ]
                     ]
-                    [ text label ]
+                    [ Html.button
+                        [ css [ buttonStyle ]
+                        , onClick editMsg
+                        ]
+                        [ text "Edit" ]
+                    , Html.button
+                        [ css [ buttonStyle ]
+                        , onClick doneMsg
+                        ]
+                        [ text label ]
+                    ]
                 ]
 
             else
