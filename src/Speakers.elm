@@ -1,4 +1,4 @@
-module Speakers exposing (ContributionId, CurrentSpeaker, DecodedSpeakers, Speaker, SpeakerEntry, SpeakerList, SpeakerName(..), Speakers, SpeakersQueue, Store, ask, clearAll, displayName, editReminder, enqueue, get, loading, questionCollectionPath, removeQuestion, removeSpeakerContribution, speakerCollectionPath, speakersDecoder, updateQuestions, updateSpeakers, editQuestion)
+module Speakers exposing (ContributionId, CurrentSpeaker, DecodedSpeakers, Speaker, SpeakerEntry, SpeakerList, SpeakerName(..), Speakers, SpeakersQueue, Store, ask, clearAll, displayName, editQuestion, editReminder, enqueue, get, loading, questionCollectionPath, removeQuestion, removeSpeakerContribution, speakerCollectionPath, speakersDecoder, updateQuestions, updateSpeakers)
 
 import HumanReadableId
 import Json.Decode as Decode exposing (Decoder)
