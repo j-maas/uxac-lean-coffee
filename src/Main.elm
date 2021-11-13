@@ -1860,22 +1860,27 @@ speakerSectionView remoteLogin remoteSpeakers timerState =
                                 ++ disabled
                             )
                             [ text "Enqueue" ]
-                in
-                case maybeSpeakers.speakers of
-                    Just speakers ->
+
+                    template above below =
                         [ Html.div
                             [ css
                                 [ Css.marginBottom (rem 0.5)
                                 ]
                             ]
-                            [ currentSpeakerView login speakers.current timerState ]
-                        , followUpSpeakersView login speakers.following (enqueueButton maybeSpeakers.queueing)
+                            [ above
+                            ]
+                        , enqueueButton maybeSpeakers.queueing
                         ]
+                            ++ below
+                in
+                case maybeSpeakers.speakers of
+                    Just speakers ->
+                        template (currentSpeakerView login speakers.current timerState)
+                            (followUpSpeakersView login speakers.following)
 
                     Nothing ->
-                        [ div [ css [ textWithButtonStyle ] ]
-                            [ enqueueButton maybeSpeakers.queueing, text "No speakers in queue yet." ]
-                        ]
+                        template (Html.div [] [ text "No speakers in queue yet." ])
+                            []
 
             _ ->
                 [ text "Loading speaker list…" ]
@@ -2007,8 +2012,8 @@ textWithButtonStyle =
 -- TODO: Remove enqueue button from parameters.
 
 
-followUpSpeakersView : Login -> SpeakerList -> Html Msg -> Html Msg
-followUpSpeakersView login followUpSpeakers enqueueButton =
+followUpSpeakersView : Login -> SpeakerList -> List (Html Msg)
+followUpSpeakersView login followUpSpeakers =
     let
         followUps =
             followUpSpeakers
@@ -2030,16 +2035,11 @@ followUpSpeakersView login followUpSpeakers enqueueButton =
                 )
     in
     if List.isEmpty followUps then
-        Html.div
-            [ css
-                [ textWithButtonStyle ]
-            ]
-            [ enqueueButton, Html.div [] [ Html.text "No further speakers yet." ] ]
+        []
 
     else
-        Html.div []
-            [ enqueueButton
-            , Html.ol
+        [ Html.div []
+            [ Html.ol
                 [ Attributes.start 2
                 , css
                     [ Css.margin zero
@@ -2049,6 +2049,7 @@ followUpSpeakersView login followUpSpeakers enqueueButton =
                 ]
                 (List.map renderEntry followUps)
             ]
+        ]
 
 
 speakerContributionView : Bool -> Msg -> String -> SpeakerName -> List (Html Msg)
