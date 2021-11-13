@@ -305,6 +305,9 @@ type Msg
     | UserNameChanged String
     | SaveUserNameClicked
     | ReminderInputChanged String
+    | ReminderEditClicked ContributionId String
+    | ReminderInputForContributionChanged ContributionId String
+    | ReminderSaveClicked ContributionId
     | EnqueueClicked
     | CurrentSpeakerDoneClicked ContributionId
     | UnqueueClicked ContributionId
@@ -566,6 +569,34 @@ update msg model =
 
         ReminderInputChanged newReminderInput ->
             ( { model | reminderInput = newReminderInput }, Cmd.none )
+
+        ReminderEditClicked contributionId currentReminder ->
+            ( { model
+                | remindersBeingEdited =
+                    Dict.insert contributionId currentReminder model.remindersBeingEdited
+              }
+            , Cmd.none
+            )
+
+        ReminderInputForContributionChanged contributionId newReminder ->
+            ( { model
+                | remindersBeingEdited = Dict.insert contributionId newReminder model.remindersBeingEdited
+              }
+            , Cmd.none
+            )
+
+        ReminderSaveClicked contributionId ->
+            case Dict.get contributionId model.remindersBeingEdited of
+                Just newReminder ->
+                    ( { model
+                        | remindersBeingEdited =
+                            Dict.remove contributionId model.remindersBeingEdited
+                      }
+                    , Speakers.editReminder model.workspace contributionId newReminder
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
 
         EnqueueClicked ->
             case model.user of
@@ -949,6 +980,7 @@ view model =
                     model.userNameInput
                     model.userNames
                     model.reminderInput
+                    model.remindersBeingEdited
                 :: discussedTopics model.user discussedList
                 ++ [ topicEntry model.user model.newTopicInput ]
             )
@@ -1459,8 +1491,9 @@ discussionView :
     -> Maybe String
     -> UserNames.Store
     -> String
+    -> Dict ContributionId String
     -> Html Msg
-discussionView remoteLogin maybeDiscussedTopic continuationVotes times timerInput remoteSpeakers maybeUserNameInput userNamesStore reminderInput =
+discussionView remoteLogin maybeDiscussedTopic continuationVotes times timerInput remoteSpeakers maybeUserNameInput userNamesStore reminderInput remindersBeingEdited =
     let
         userNameInput =
             case ( remoteLogin, userNamesStore ) of
@@ -1518,7 +1551,11 @@ discussionView remoteLogin maybeDiscussedTopic continuationVotes times timerInpu
                )
             ++ remainingTime remoteLogin times timerInput
             :: continuationVote remoteLogin continuationVotes
-            ++ speakerSectionView remoteLogin remoteSpeakers (getTimerState times) reminderInput
+            ++ speakerSectionView remoteLogin
+                remoteSpeakers
+                (getTimerState times)
+                reminderInput
+                remindersBeingEdited
             :: userNameInput
         )
 
@@ -1832,8 +1869,8 @@ continuationVoteButtons user continuationVotes =
         [ stayButton, abstainButton, moveOnButton ]
 
 
-speakerSectionView : Remote Login -> Remote SpeakersQueue -> TimerState -> String -> Html Msg
-speakerSectionView remoteLogin remoteSpeakers timerState reminderInput =
+speakerSectionView : Remote Login -> Remote SpeakersQueue -> TimerState -> String -> Dict ContributionId String -> Html Msg
+speakerSectionView remoteLogin remoteSpeakers timerState reminderInput remindersBeingEdited =
     Html.div
         [ css
             [ spaceChildren (Css.marginTop (rem 0.5))
@@ -1888,8 +1925,16 @@ speakerSectionView remoteLogin remoteSpeakers timerState reminderInput =
                 in
                 case maybeSpeakers.speakers of
                     Just speakers ->
-                        template (currentSpeakerView login speakers.current timerState)
-                            (followUpSpeakersView login speakers.following)
+                        template
+                            (currentSpeakerView login
+                                speakers.current
+                                remindersBeingEdited
+                                timerState
+                            )
+                            (followUpSpeakersView login
+                                speakers.following
+                                remindersBeingEdited
+                            )
 
                     Nothing ->
                         template (Html.div [] [ text "No speakers in queue yet." ])
@@ -1958,8 +2003,8 @@ loadingIndicator active =
         ]
 
 
-currentSpeakerView : Login -> CurrentSpeaker -> TimerState -> Html Msg
-currentSpeakerView login current timerState =
+currentSpeakerView : Login -> CurrentSpeaker -> Dict ContributionId String -> TimerState -> Html Msg
+currentSpeakerView login current remindersBeingEdited timerState =
     let
         ( activeContributionId, activeSpeaker, reminder ) =
             current.speaker
@@ -1993,11 +2038,11 @@ currentSpeakerView login current timerState =
         (speakerContributionView
             { canModify = canModify activeSpeaker && List.isEmpty current.questions
             , doneMsg = CurrentSpeakerDoneClicked activeContributionId
-            , editMsg = CurrentSpeakerDoneClicked activeContributionId
+            , contributionId = activeContributionId
             , label = "Done"
             , speakerName = Speakers.displayName activeSpeaker
             , rawReminder = reminder
-            , reminderInput = Nothing
+            , maybeReminderInput = Dict.get activeContributionId remindersBeingEdited
             }
             ++ [ Html.ol []
                     (List.map
@@ -2006,11 +2051,11 @@ currentSpeakerView login current timerState =
                                 (speakerContributionView
                                     { canModify = canModify asker
                                     , doneMsg = QuestionDoneClicked questionId
-                                    , editMsg = QuestionDoneClicked questionId
+                                    , contributionId = questionId
                                     , label = "Done"
                                     , speakerName = Speakers.displayName asker
                                     , rawReminder = question
-                                    , reminderInput = Nothing
+                                    , maybeReminderInput = Dict.get questionId remindersBeingEdited
                                     }
                                 )
                         )
@@ -2025,8 +2070,8 @@ currentSpeakerView login current timerState =
         )
 
 
-followUpSpeakersView : Login -> SpeakerList -> List (Html Msg)
-followUpSpeakersView login followUpSpeakers =
+followUpSpeakersView : Login -> SpeakerList -> Dict ContributionId String -> List (Html Msg)
+followUpSpeakersView login followUpSpeakers remindersBeingEdited =
     let
         followUps =
             followUpSpeakers
@@ -2043,11 +2088,11 @@ followUpSpeakersView login followUpSpeakers =
                 (speakerContributionView
                     { canModify = canModify
                     , doneMsg = UnqueueClicked contributionId
-                    , editMsg = UnqueueClicked contributionId
+                    , contributionId = contributionId
                     , label = "Unqueue"
                     , speakerName = Speakers.displayName speaker
                     , rawReminder = reminder
-                    , reminderInput = Nothing
+                    , maybeReminderInput = Dict.get contributionId remindersBeingEdited
                     }
                 )
     in
@@ -2072,56 +2117,82 @@ followUpSpeakersView login followUpSpeakers =
 speakerContributionView :
     { canModify : Bool
     , doneMsg : Msg
-    , editMsg : Msg
+    , contributionId : ContributionId
     , label : String
     , speakerName : SpeakerName
     , rawReminder : String
-    , reminderInput : Maybe String
+    , maybeReminderInput : Maybe String
     }
     -> List (Html Msg)
-speakerContributionView { canModify, doneMsg, editMsg, label, speakerName, rawReminder, reminderInput } =
+speakerContributionView { canModify, doneMsg, contributionId, label, speakerName, rawReminder, maybeReminderInput } =
     let
-        reminder name =
-            case String.trim rawReminder of
-                "" ->
-                    name
+        reminder =
+            String.trim rawReminder
 
-                trimmed ->
-                    name ++ ": " ++ trimmed
-
-        reminderView =
+        nameView =
             case speakerName of
                 CustomName n ->
-                    text (reminder n)
+                    text n
 
                 GeneratedName n ->
-                    span [ css [ Css.fontStyle Css.italic ] ] [ text (reminder n) ]
-    in
-    reminderView
-        -- Add spacing that also works when the line breaks
-        :: text " "
-        :: (if canModify then
-                [ Html.span
-                    [ css
-                        [ Css.display Css.inlineFlex
-                        , Css.property "gap" "0.5rem"
-                        ]
-                    ]
-                    [ Html.button
-                        [ css [ buttonStyle ]
-                        , onClick editMsg
-                        ]
-                        [ text "Edit" ]
+                    span [ css [ Css.fontStyle Css.italic ] ] [ text n ]
+
+        ( reminderView, reminderButton ) =
+            case maybeReminderInput of
+                Just reminderInput ->
+                    ( [ text ": "
+                      , Html.input
+                            [ value reminderInput
+                            , onInput (ReminderInputForContributionChanged contributionId)
+                            , css [ inputStyle ]
+                            ]
+                            []
+                      ]
                     , Html.button
                         [ css [ buttonStyle ]
-                        , onClick doneMsg
+                        , onClick (ReminderSaveClicked contributionId)
                         ]
-                        [ text label ]
-                    ]
-                ]
+                        [ text "Save" ]
+                    )
 
-            else
-                []
+                Nothing ->
+                    let
+                        reminderEditButton =
+                            Html.button
+                                [ css [ buttonStyle ]
+                                , onClick (ReminderEditClicked contributionId reminder)
+                                ]
+                                [ text "Edit" ]
+                    in
+                    if String.isEmpty reminder then
+                        ( [], reminderEditButton )
+
+                    else
+                        ( [ text <| ": " ++ reminder ], reminderEditButton )
+    in
+    nameView
+        :: reminderView
+        -- Add spacing that also works when the line breaks
+        ++ (text " "
+                :: (if canModify then
+                        [ Html.span
+                            [ css
+                                [ Css.display Css.inlineFlex
+                                , Css.property "gap" "0.5rem"
+                                ]
+                            ]
+                            [ reminderButton
+                            , Html.button
+                                [ css [ buttonStyle ]
+                                , onClick doneMsg
+                                ]
+                                [ text label ]
+                            ]
+                        ]
+
+                    else
+                        []
+                   )
            )
 
 

@@ -1,4 +1,4 @@
-module Speakers exposing (ContributionId, CurrentSpeaker, DecodedSpeakers, Speaker, SpeakerEntry, SpeakerList, SpeakerName(..), Speakers, SpeakersQueue, Store, ask, clearAll, displayName, enqueue, get, loading, questionCollectionPath, removeQuestion, removeSpeakerContribution, speakerCollectionPath, speakersDecoder, updateQuestions, updateSpeakers)
+module Speakers exposing (ContributionId, CurrentSpeaker, DecodedSpeakers, Speaker, SpeakerEntry, SpeakerList, SpeakerName(..), Speakers, SpeakersQueue, Store, ask, clearAll, displayName, enqueue, get, loading, questionCollectionPath, removeQuestion, removeSpeakerContribution, speakerCollectionPath, speakersDecoder, updateQuestions, updateSpeakers, editReminder)
 
 import HumanReadableId
 import Json.Decode as Decode exposing (Decoder)
@@ -70,6 +70,14 @@ enqueue workspace timestamp userId reminder =
     Store.insertDoc
         { collectionPath = speakerCollectionPath workspace
         , doc = speakerEncoder timestamp userId reminder
+        }
+
+
+editReminder : Store.Workspace -> ContributionId -> String -> Cmd msg
+editReminder workspace contributionId newReminder =
+    Store.editDoc
+        { docPath = speakerCollectionPath workspace ++ [ contributionId ]
+        , fields = [ ( "reminder", Encode.string newReminder ) ]
         }
 
 

@@ -72,6 +72,22 @@ setDoc info =
 port setDoc_ : Encode.Value -> Cmd msg
 
 
+type alias EditDocInfo =
+    { docPath : Path, fields : List ( String, Encode.Value ) }
+
+
+editDoc : EditDocInfo -> Cmd msg
+editDoc info =
+    Encode.object
+        [ ( "path", encodePath info.docPath )
+        , ( "fields", Encode.object info.fields )
+        ]
+        |> editDoc_
+
+
+port editDoc_ : Encode.Value -> Cmd msg
+
+
 type alias InsertDocInfo =
     { collectionPath : Path, doc : Encode.Value }
 
