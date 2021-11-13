@@ -1957,34 +1957,20 @@ speakerSectionView remoteLogin remoteSpeakers timerState reminderInput reminders
         (case ( remoteLogin, remoteSpeakers ) of
             ( Got login, Got maybeSpeakers ) ->
                 let
-                    enqueueButton : Bool -> Html Msg
-                    enqueueButton queueing =
-                        let
-                            timerEnded =
-                                case timerState of
-                                    Ended ->
-                                        True
+                    timerEnded =
+                        case timerState of
+                            Ended ->
+                                True
 
-                                    _ ->
-                                        False
+                            _ ->
+                                False
 
-                            disabled =
-                                if timerEnded || queueing then
-                                    [ Attributes.disabled True ]
+                    disabled =
+                        if timerEnded || maybeSpeakers.queueing then
+                            [ Attributes.disabled True ]
 
-                                else
-                                    []
-                        in
-                        Html.button
-                            ([ css
-                                [ buttonStyle
-                                , loadingIndicator queueing
-                                ]
-                             , onClick EnqueueClicked
-                             ]
-                                ++ disabled
-                            )
-                            [ text "Enqueue" ]
+                        else
+                            []
 
                     template above below =
                         [ Html.div
@@ -1994,9 +1980,25 @@ speakerSectionView remoteLogin remoteSpeakers timerState reminderInput reminders
                             ]
                             [ above
                             ]
-                        , Html.div [ css [ Css.displayFlex, Css.property "gap" "0.5rem" ] ]
+                        , Html.form
+                            [ onSubmit EnqueueClicked
+                            , css
+                                [ Css.displayFlex
+                                , Css.property "gap" "0.5rem"
+                                ]
+                            ]
                             [ Html.input [ value reminderInput, onInput ReminderInputChanged, css [ inputStyle ] ] []
-                            , enqueueButton maybeSpeakers.queueing
+                            , Html.input
+                                ([ type_ "submit"
+                                 , value "Enqueue"
+                                 , css
+                                    [ buttonStyle
+                                    , loadingIndicator maybeSpeakers.queueing
+                                    ]
+                                 ]
+                                    ++ disabled
+                                )
+                                []
                             ]
                         ]
                             ++ below
@@ -2168,13 +2170,19 @@ currentSpeakerView login current remindersBeingEdited questionsBeingEdited quest
                         )
                         current.questions
                     )
-               , Html.div [ css [ Css.displayFlex, Css.property "gap" "0.5rem" ] ]
+               , Html.form [ onSubmit AskQuestionClicked, css [ Css.displayFlex, Css.property "gap" "0.5rem" ] ]
                     [ Html.input [ value questionInput, onInput NewQuestionInputChanged, css [ inputStyle ] ] []
-                    , Html.button
-                        ([ css [ buttonStyle, loadingIndicator current.questionsQueueing ], onClick AskQuestionClicked ]
+                    , Html.input
+                        ([ type_ "submit"
+                         , value "Ask"
+                         , css
+                            [ buttonStyle
+                            , loadingIndicator current.questionsQueueing
+                            ]
+                         ]
                             ++ disabled
                         )
-                        [ Html.text "Ask" ]
+                        []
                     ]
                ]
         )
