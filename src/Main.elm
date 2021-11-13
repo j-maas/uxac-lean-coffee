@@ -2255,63 +2255,73 @@ speakerContributionView { canModify, msgs, label, speakerName, rawReminder, mayb
                 GeneratedName n ->
                     span [ css [ Css.fontStyle Css.italic ] ] [ text n ]
 
-        ( reminderView, reminderButton ) =
-            case maybeReminderInput of
-                Just reminderInput ->
-                    ( [ text ": "
-                      , Html.input
-                            [ value reminderInput
-                            , onInput msgs.changed
-                            , css [ inputStyle ]
-                            ]
-                            []
-                      ]
-                    , Html.button
-                        [ css [ buttonStyle ]
-                        , onClick msgs.save
+        doneButton =
+            Html.button
+                [ css [ buttonStyle ]
+                , onClick msgs.done
+                ]
+                [ text label ]
+
+        reminderEditButton =
+            Html.button
+                [ css [ buttonStyle ]
+                , onClick (msgs.edit reminder)
+                ]
+                [ text "Edit" ]
+
+        toolbar buttons =
+            if canModify then
+                [ Html.span
+                    [ css
+                        [ Css.display Css.inlineFlex
+                        , Css.property "gap" "0.5rem"
                         ]
-                        [ text "Save" ]
-                    )
+                    ]
+                    buttons
+                ]
 
-                Nothing ->
-                    let
-                        reminderEditButton =
-                            Html.button
-                                [ css [ buttonStyle ]
-                                , onClick (msgs.edit reminder)
-                                ]
-                                [ text "Edit" ]
-                    in
-                    if String.isEmpty reminder then
-                        ( [], reminderEditButton )
-
-                    else
-                        ( [ text <| ": " ++ reminder ], reminderEditButton )
+            else
+                []
     in
-    nameView
-        :: reminderView
-        -- Add spacing that also works when the line breaks
-        ++ (text " "
-                :: (if canModify then
-                        [ Html.span
-                            [ css
-                                [ Css.display Css.inlineFlex
-                                , Css.property "gap" "0.5rem"
-                                ]
-                            ]
-                            [ reminderButton
-                            , Html.button
-                                [ css [ buttonStyle ]
-                                , onClick msgs.done
-                                ]
-                                [ text label ]
-                            ]
-                        ]
+    case maybeReminderInput of
+        Just reminderInput ->
+            [ nameView
+            , text ": "
+            , Html.form
+                [ onSubmit msgs.save
+                , css
+                    [ Css.display Css.inlineFlex
+                    , Css.alignItems Css.center
+                    , Css.property "gap" "0.5rem"
+                    , Css.marginRight (rem 0.5)
+                    ]
+                ]
+                [ Html.input
+                    [ value reminderInput
+                    , onInput msgs.changed
+                    , css [ inputStyle ]
+                    ]
+                    []
+                , Html.input [ type_ "submit", value "Save", css [ buttonStyle ] ] []
+                ]
+            ]
+                ++ toolbar [ doneButton ]
+
+        Nothing ->
+            let
+                reminderView =
+                    if String.isEmpty reminder then
+                        []
 
                     else
-                        []
+                        [ text (": " ++ reminder) ]
+            in
+            nameView
+                :: reminderView
+                -- Add spacing that also works when the line breaks
+                ++ (text " "
+                        :: toolbar [ reminderEditButton, doneButton ]
                    )
-           )
 
 
 topicEntry : Remote Login -> String -> Html Msg
@@ -2590,7 +2600,7 @@ topicToVoteCard remoteUser ( topicId, entry ) =
                                 ]
                             ]
                             []
-                        , div [ css [ Css.marginLeft (rem 1) ] ] [ saveButton topicId ]
+                        , Html.input [ type_ "submit", value "Save", css [ buttonStyle, Css.marginLeft (rem 1) ] ] []
                         ]
 
                 Nothing ->
@@ -2751,15 +2761,6 @@ votesText : Int -> Html Msg
 votesText count =
     text
         ("👍 " ++ String.fromInt count)
-
-
-saveButton : TopicId -> Html Msg
-saveButton topicId =
-    button
-        [ onClick (SaveTopicClicked topicId)
-        , css [ buttonStyle ]
-        ]
-        [ text "Save" ]
 
 
 editButton : TopicId -> Html Msg
