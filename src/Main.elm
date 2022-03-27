@@ -1056,9 +1056,8 @@ view model =
                     model.questionsBeingEdited
                     model.questionInput
                 :: discussedTopics model.user discussedList
-                ++ [ topicEntry model.user model.newTopicInput ]
             )
-        , topicsToVote model.user topicList (sortBarView model.votes model.topics)
+        , topicsToVote model.user model.newTopicInput topicList (sortBarView model.votes model.topics)
         , div
             [ css
                 [ limitWidth
@@ -2336,16 +2335,17 @@ topicEntry : Remote Login -> String -> Html Msg
 topicEntry user newTopicInput =
     div
         [ css
-            [ containerPadding
-            , borderRadius
+            [ 
+             borderRadius
             , backgroundColor
+            , Css.marginBottom (rem 2)
             ]
         ]
         [ submitForm user newTopicInput ]
 
 
-topicsToVote : Remote Login -> Remote (List TopicWithVotes) -> Html Msg -> Html Msg
-topicsToVote creds remoteTopics toolbar =
+topicsToVote : Remote Login -> String -> Remote (List TopicWithVotes) -> Html Msg -> Html Msg
+topicsToVote creds newTopicInput remoteTopics toolbar =
     div
         [ css
             [ backgroundColor
@@ -2388,6 +2388,7 @@ topicsToVote creds remoteTopics toolbar =
                 ]
             , toolbar
             ]
+        , topicEntry creds newTopicInput
         , case remoteTopics of
             Loading ->
                 text "Loading topics…"
@@ -2854,7 +2855,8 @@ newTopicForm user currentInput =
         [ css [ Css.displayFlex, Css.flexDirection Css.column, Css.alignItems Css.flexStart ]
         , onSubmit (SaveTopic user)
         ]
-        [ Html.label [ css [ Css.displayFlex, Css.flexDirection Css.column, Css.width (pct 100) ] ]
+        [ Html.label [ css [ Css.displayFlex, Css.flexDirection Css.column,
+        Css.maxWidth (pct 100) ] ]
             [ text "Add a topic"
             , Html.input
                 [ value currentInput
@@ -2862,6 +2864,9 @@ newTopicForm user currentInput =
                 , css
                     [ inputStyle
                     , Css.marginTop (rem 0.3)
+                    , Css.maxWidth (pct 100)
+                    , Css.width (rem 20)
+                    , Css.boxSizing Css.borderBox
                     ]
                 ]
                 []
